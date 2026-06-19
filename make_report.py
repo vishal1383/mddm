@@ -126,7 +126,7 @@ def main() -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create the MDM probe Word report.")
     parser.add_argument("--root", default="outputs/full_probe")
-    parser.add_argument("--out", default="reports/mdm_spread_anchor_probe_report.docx")
+    parser.add_argument("--out", default="reports/mdm_spread_anchor_probe_report_v2.docx")
     return parser.parse_args()
 
 
