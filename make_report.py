@@ -67,10 +67,10 @@ def main() -> None:
 
     report.heading("Layout-Control Scores", 2)
     report.paragraph(
-        "Each model/dataset has two tables. The first reports the entropy-reduction score used for "
-        "anchor selection, AggregatedIG_gt = sum_q H_before(q) - H_after(q). The second reports the same "
-        "result as gold entropy delta: sum_q H_after(q) - H_before(q). Negative entropy delta means the "
-        "gold anchors made the model more certain."
+        "Each model/dataset table reports the entropy-reduction score used for anchor selection, "
+        "AggregatedIG_gt = sum_q H_before(q) - H_after(q). This gold-anchor influence metric can be "
+        "negative because it conditions on fixed ground-truth anchor values rather than averaging over "
+        "all possible anchor-token values."
     )
     for run, model, dataset in RUNS:
         report.heading(f"{model} / {dataset}", 3)
@@ -79,11 +79,6 @@ def main() -> None:
         report.table(
             ["k", "greedy_ig", "max separated", "prefix", "suffix", "middle cluster"],
             layout_table_rows(aggregate_path, "mean_information_gain"),
-        )
-        report.paragraph("Gold entropy delta: sum(H_after - H_before)")
-        report.table(
-            ["k", "greedy_ig", "max separated", "prefix", "suffix", "middle cluster"],
-            layout_table_rows(aggregate_path, "mean_entropy_delta"),
         )
 
     report.heading("Layout p_gt Examples", 2)
