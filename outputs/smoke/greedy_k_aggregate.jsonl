@@ -1,0 +1,2 @@
+{"k": 1, "n": 1, "mean_information_gain": 52.27621275186539, "mean_p_gt_gain": 11.012230524293273, "mean_score_after": 0.43953760173556683}
+{"k": 2, "n": 1, "mean_information_gain": 34.68255201447755, "mean_p_gt_gain": 6.7550144496835856, "mean_score_after": 0.660691458628753}

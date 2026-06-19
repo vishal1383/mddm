@@ -1,0 +1,632 @@
+ChatGPT
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+mdm-spread-anchor-decoding-experiment.pdf
+PDF
+Help me understand this more
+
+I’ll unpack the document as an experiment design: what claim it tests, why anchors matter in masked diffusion, what the metrics mean, and what I’d fix before running it.
+
+Thought for 21s
+This is basically testing whether masked diffusion language models can use non-left-to-right “anchor” tokens as scaffolding.
+
+In an MDM, the model sees a partially masked sequence and predicts all remaining masked tokens in parallel. Standard confidence decoding often becomes accidentally left-to-right: once a prefix is known, the next few positions become most confident, so decoding behaves like an autoregressive model. Your experiment asks: what if we reveal a few true tokens far apart? Does confidence improve elsewhere, especially between those anchors? 
+
+
+Core idea
+Suppose the true completion is:
+
+The cat sat on the mat because it was tired.
+A prefix layout reveals:
+
+The cat [MASK] [MASK] [MASK] [MASK] [MASK] [MASK] [MASK]
+A spread-anchor layout reveals:
+
+The [MASK] [MASK] on [MASK] [MASK] because [MASK] tired.
+Both may reveal the same number of tokens. But the second gives the model global structure: subject, preposition, causal connector, endpoint. The question is whether that layout makes other masked positions more predictable.
+
+So the claim is not “anchors help because there are more known tokens.” The claim is:
+
+Where the known tokens are placed matters.
+
+That is the important mechanism.
+
+What the experiment measures
+You fix:
+
+prompt + ground-truth completion x
+Then you create partial sequences z_A, where some ground-truth completion tokens are revealed as anchors and the rest are masked.
+
+For every remaining masked position i, the model gives a distribution over tokens. From that you compute confidence:
+
+c_i(z_A)
+For example, confidence could be max probability:
+
+c_i = max_token P(token at i | z_A)
+Then you compare confidence landscapes under different anchor layouts.
+
+The document defines:
+
+score(z_A) = sum over masked i of f(c_i(z_A))
+Meaning: total confidence over the still-masked region. Higher score means the current anchors made the remaining sequence easier for the model.
+
+Influence: the cleanest concept
+For candidate anchor p and target masked position q:
+
+I_{p,q} = c_q(z_{A ∪ {p}}) - c_q(z_A)
+This asks:
+
+If I reveal token p, how much does confidence at position q increase?
+
+If revealing a far-away anchor increases confidence at many distant positions, then the model is using global context.
+
+A local L2R-like model would mostly show influence near p or near the prefix. A good MDM should sometimes show long-range influence.
+
+Information gain version
+Confidence is a rough proxy. Information gain is cleaner:
+
+IG(z, A, p, q) =
+H(z_q | z_A) - H(z_q | z_{A ∪ {p}})
+If entropy drops after revealing anchor p, then p helped predict q.
+
+So aggregated information gain should be:
+
+IG(z, A, p) = sum_{q in remaining masked positions, q != p} IG(z, A, p, q)
+This tells you how useful anchor p is overall.
+
+One issue: the PDF’s set expression for the aggregate IG appears malformed. It writes something like summing over a set that subtracts itself, which would be empty. It should almost certainly be:
+
+q ∈ Ā_k \ {p}
+where Ā_k means remaining masked candidate positions.
+
+Greedy anchor selection
+The greedy procedure is:
+
+A_0 = ∅
+
+For k rounds:
+    try every remaining masked position p
+    reveal ground-truth token x_p
+    run one forward pass
+    compute total IG from p
+    choose best p
+    add p to anchor set
+So round 1 answers:
+
+Is there any single anchor token whose reveal helps many other positions?
+
+Later rounds answer:
+
+Does the model naturally choose spread-out anchors, or does it keep choosing prefix-like/local anchors?
+
+The document calls k=1 the “existence probe,” because it only checks whether useful nonlocal anchors exist at all. 
+
+
+Why layout controls matter
+Greedy search can be noisy. It may pick weird positions due to token frequency, punctuation, or idiosyncratic model confidence.
+
+So the document proposes hand-specified layouts:
+
+Layout	Meaning
+Prefix	first k masked positions
+Spread	anchors maximally separated
+Cluster-mid	k consecutive middle positions
+This is the key causal control.
+
+At matched k, all layouts reveal the same number of tokens. So if spread beats prefix, the effect is about spatial placement, not simply more information.
+
+Where this should work best
+The document correctly predicts that the effect will be domain-dependent. 
+
+
+Strongest domains:
+
+1. Code skeletons
+Example:
+
+def foo(x):
+    [MASK]
+    return y
+If the model sees both function signature and return structure, it can infer the middle better. Code has delimiters, indentation, repeated variables, and long-range constraints.
+
+2. Templates / slot filling
+Example:
+
+Name: [MASK]
+Date: [MASK]
+Total: [MASK]
+Payment method: [MASK]
+Distant fields are semantically coupled. Seeing one slot can constrain another.
+
+3. Parallel lists
+Example:
+
+France - Paris
+Germany - Berlin
+Italy - [MASK]
+Spain - [MASK]
+Anchors far apart reveal the repeated schema.
+
+Weakest domain:
+
+Free-form continuation
+Plain prose may still be dominated by local L2R priors. Spread anchors may help less unless there is strong discourse structure.
+
+What result would be interesting
+A strong positive result would look like this:
+
+spread score > prefix score
+spread IG tail has nonlocal mass
+greedy-selected anchors are far apart
+In words:
+
+Revealing a distant anchor improves confidence not just nearby, but across the sequence.
+
+A weak/null result:
+
+prefix ≈ spread
+influence mostly local
+greedy picks near-prefix tokens
+That would mean MDM confidence decoding is still mostly behaving like L2R AR decoding.
+
+The most important plot to make
+For each candidate anchor p, plot influence over target positions q:
+
+x-axis: q position
+y-axis: I_{p,q} or IG_{p,q}
+Then compare:
+
+prefix anchor
+middle anchor
+suffix anchor
+spread anchor set
+The signature you want is a nonlocal influence tail: anchor at position 90 improves confidence at positions 30–70, not only 89–91.
+
+My suggested simplification
+Run this first:
+
+For each prompt:
+    baseline forward pass with no anchors
+    for every candidate p:
+        reveal x_p
+        forward pass
+        compute Δ confidence / entropy over all q != p
+Then report:
+
+best local anchor
+best nonlocal anchor
+best prefix anchor
+best spread anchor
+Do not start with multi-step decoding. The document is right: first prove the mechanism exists with single-pass probing.
+
+Final intuition
+This experiment is asking whether MDMs have a real advantage over AR models:
+
+Can they use scattered known tokens to infer the whole sequence globally?
+
+If yes, then decoding should not just be “pick the most confident next token.” It should actively choose anchors that maximize global information gain. That would make MDM decoding more like building a scaffold first, then filling in the gaps.
+
+
+Ok referenced papers ezplain
+
+
+122_Improved_Sampling_from_Mas.pdf
+PDF
+ok help me to understand this paper make it minimal
+
+Thought for 14s
+This paper says:
+
+MDMs can generate many tokens per forward pass, but their confidence scores are bad. So naive “pick most confident masked positions” decoding chooses wrong positions.
+
+Core problem:
+
+[MASK] [MASK] [MASK] ... [MASK]
+The model is often overconfident at the far left and far right masked positions. It also gives generic tokens like space/newline high probability at many positions, so confidence is not position-specific. The paper observes this on LLaDA-8B and DREAM-7B. 
+
+
+Existing sampler: sort-and-select
+One decoding step:
+
+1. Run model on masked sequence.
+2. For every masked position, get token distribution.
+3. Sort positions by confidence.
+4. Select several positions whose entropy/error budget is acceptable.
+5. Fill those positions.
+This is faster than one-token-at-a-time decoding.
+
+Problem: confidence is biased, so sorting by confidence is bad.
+
+Their fix: PCG
+Position Contrastive Guidance = make confidence position-specific.
+
+Two parts.
+
+1. SLR: soft left-to-right bias
+They multiply confidence by a decaying function:
+
+score(i) = σ(i) * max_v p(v | z, i)
+So early masked positions are favored, far-right positions are suppressed.
+
+Why? Instruct MDMs are too confident about far-right EOS/PAD/space-like tokens.
+
+2. Contrastive position guidance
+They penalize tokens that are likely everywhere.
+
+Formula:
+
+p_PCG(v | z, i) ∝ p(v | z, i)^(1+λ) / p_ref(v | z)^λ
+Meaning:
+
+good token = high probability at this position
+bad token = high probability at many positions
+Example:
+
+space token: high everywhere → penalize
+number "6": high only here → boosted
+So PCG prefers informative, position-specific tokens.
+
+Results
+They test on:
+
+GSM8K
+MATH500
+HumanEval
+with:
+
+LLaDA-8B Base/Instruct
+DREAM-7B Base/Instruct
+Main result: PCG usually improves both accuracy and number of forward passes. Global reference distribution works better than local reference. Gains are bigger for instruct models and DREAM. On base MATH500, accuracy slightly drops. 
+
+
+Why this matters for your anchor idea
+This paper says:
+
+Raw MDM confidence is not trustworthy.
+
+So in your spread-anchor experiment, if you measure anchor usefulness using raw confidence, you must be careful. A “high-confidence” position may just be a generic-space/EOS artifact.
+
+Your experiment should compare:
+
+raw confidence / entropy IG
+vs
+PCG-adjusted confidence / entropy IG
+Also, this paper’s direction is almost opposite to your idea:
+
+PCG: adds soft L2R bias to make decoding safer.
+Your idea: test whether non-L2R spread anchors can help globally.
+So PCG is a strong baseline/confound. Your paper can say:
+
+Prior work fixes MDM decoding by correcting positional confidence bias and softly encouraging L2R order. We ask whether nonlocal anchor layouts can instead exploit the parallel/global nature of MDMs.
+
+
+
+### 2\. Contrastive position guidance They penalize tokens that are likely everywhere. Formula: p_PCG(v | z, i) ∝ p(v | z, i)^(1+λ) / p_ref(v | z)^λ Meaning:
+
+Convert to writing block
+
+
+2508.13021v3.pdf
+PDF
+
+Thought for 13s
+For this new paper, minimal summary:
+
+Minimal explanation: UNCODE paper
+This paper studies why masked diffusion models decode badly when they use naive confidence/entropy-based unmasking.
+
+Main claim:
+
+Uncertainty-based decoding has two biases:
+1. Rigid boundary bias
+2. Trivial token bias
+Rigid boundary bias means the model unmasks the left and right ends first, then moves inward. This creates a U-shaped decoding trajectory. For reasoning tasks, this is bad because the model may reveal the final answer before building the reasoning chain.
+
+Trivial token bias means the model prefers easy tokens like spaces, punctuation, newlines, “the”, “of”, etc. These tokens are high-confidence but low-information. Revealing them early wastes decoding steps and can lock the model into bad formatting.
+
+Their method is UNCODE.
+
+It changes the unmasking score:
+
+calibrated score = positional prior × semantic prior × raw uncertainty score
+The positional prior controls decoding order. It can make decoding more left-to-right when the task needs sequential reasoning.
+
+P_i = exp(-λ i)
+Larger λ = more left-to-right.
+
+Smaller λ = more flexible / global decoding.
+
+The semantic prior penalizes frequent boring tokens:
+
+S_i = -log p_corpus(predicted_token)
+So rare/contentful tokens get higher priority, while spaces and punctuation get lower priority.
+
+Main result:
+
+UNCODE improves MDM decoding by fixing bad unmasking order.
+They test on:
+
+HumanEval, MBPP, GSM8K, MATH500, GPQA, Countdown, Sudoku
+and models:
+
+LLaDA-8B-Instruct
+LLaDA-1.5-8B
+Dream-v0-Instruct-7B
+They report over 7% average improvement over decoding baselines, and show it can combine with faster samplers like EB-Sampler and Fast-dLLM.
+
+Relation to your spread-anchor idea
+This paper says:
+
+Naive confidence is biased.
+Your experiment says:
+
+Can far-apart anchors improve global prediction?
+So for your experiment, do not only use raw confidence. You should compare:
+
+raw confidence IG
+raw entropy IG
+UNCODE-calibrated IG
+PCG-calibrated IG
+This paper is very relevant because it proves that MDM decoding order is not neutral. The order has strong structure, and bad order hurts reasoning.
+
+Your possible angle:
+
+UNCODE fixes bad uncertainty decoding by adding priors.
+We ask whether useful nonlocal anchors can be discovered directly by measuring global information gain.
+
+ok now returning back to the proposal to understand thing more clearly put notation.. i also need to send dhruvesh a document saying what experiments to do and exactly how...
+
+make sentences minimal models datasets (add bio legal just for clarity)
+his main questions addressed
+tokens more tokens less uncertain or where those tokens sit matter
+at matched anchor do we beat greedy?
+how is confidence and score computed from these diffusion models?
+also notation helo me understand better why si cost kc2 how is cost computed
+i guess maybe forst pick gsm8k and human eval and
+1. does there exist these tokens
+2.does position of these tokens matter
+3. do data domains matter
+
+also whats unclear as confidence is the p of token at position i?
+ask me questions to ensure i understand coorectly
+next steps i should ask dhruvesh clarification confidence is just p?
+maybe before that walk me through a minimal example 
+
+Maybe format minimal message i need to send to him clarify how confidence is define dis it max p or p_gt
+1. Confidence how is it defined is it p_gt or max p at i use ontaiton
+2. models used in dhruvesh paper dream7b and llada 8b... repo t.... dtasets gsm8k prompt+golden soln fill, humaneval fnstub+function fill in can do it for others also (bio, legal etc. domains)
+3. first find if there is a 
+DomainRationale
+Template / slot filling Distant slots may be semantically coupled
+Code skeleton Signature + closing delimiter as natural far anchors
+Parallel / list structure Shared scaffold across repeated clauses
+Free-form continuationLikely weak---L
+for domains suggest a dataset fo reach domain?
+non-greedy-fim-placeholder-generation --- complementary AR/FIM angle on
+out-of-order generation; MDM anchors play a similar scaffolding role at decode
+time.
+fill-in-the-middle --- prefix--su
+ffix conditioning analogue; spread anchors mimic
+distant fixed context without a single middl
+also flags i did not understand....
+what are they
+
+also what is final metric IG is a way of measuring anchor quality if i understand correctly.. but is final metric something like latency or number of turns to decode? or quality of decoding how to measure that.
+i think confidence is p_gt maybe mention that.. maybe something here is my summary of what i need ot do pick llada8b on gsm8k, humaneval (prompt+completion) and then first 
+1. check existence of anchor reelaing that ground truth token at so a plot of confidence wet position for before and after k=1 prompt (xxis seqlen y is confidence p_gt)
+2.repeat for doing it k time and notice score (sum p_gt across all masked positions)
+3. layout contorl i didnt get it (explain tome chatgpt) old anchor tokens xi fixed
+(from the greedy chain or round-1 hot spots); permute indices only so with ig we fix tokens 
+datadomain 
+code (humaneval), math reasoning (gsm8k) for now
+bio, legal, creative writing, text to sql etc. etc. later.
+flags didnt get it are they used as flags for the model?
+
+ok confimr that in ask.a also think confidence should be teacher-forced gold confidence: p(x_i | z_A, i), rather than max-token confidence. Is that right? ->think confidence should be teacher-forced gold confidence: p(x_i | z_A, i) right?
+
+Hi Dhruvesh, I wanted to clarify the anchor probe before implementing.
+
+For a prompt P, gold completion x = x1...xT, and anchor set A, we reveal the true token xi for positions i in A and keep the rest masked. For each remaining masked position i, I think confidence should be teacher-forced gold confidence: p(x_i | z_A, i), rather than max-token confidence. Is that right?
+
+Current plan:
+
+1. Use LLaDA-8B and Dream-7B on GSM8K and HumanEval.
+2. First check whether a useful single anchor exists by revealing one ground-truth token and measuring before/after gold confidence on the remaining masked positions.
+3. Repeat greedily for k anchors.
+4. As layout controls, choose k anchors in prefix, suffix, middle cluster, and maximally separated positions, then compare before/after scores at matched k.
+
+Does this sound like the right setup? this message is good make those correction in this
+
+also what is non-local here..? definition? ask>?
+
+not immediate meighoubrs?
+
+Hi Dhruvesh, I went through the proposal and the paper. thanks for sharing those across. I wanted to clarify the anchor probe before implementing.
+For a prompt P, gold completion x = x1...xT, and anchor set A, we reveal the true token xi for positions i in A and keep the rest masked. For each remaining masked position i, I think confidence should be teacher-forced gold confidence: p(x_i | z_A, i), right?
+Current plan:
+Use LLaDA-8B and Dream-7B on GSM8K and HumanEval.
+First check whether a useful single anchor exists by revealing one ground-truth token and measuring before/after gold confidence on the remaining masked positions. Plot p_gt_i vs sequence position, and track score / summed IG.
+Repeat greedily for k anchors.
+As layout controls, choose k anchors in prefix, suffix, middle cluster, and maximally separated positions, then compare before/after scores at matched k. I assume we always reveal the true token xi at its own position i, and only vary which indices are revealed.
+Does this sound like the right setup?
+
+add that to clarification
+
+5 how do we define non-local influence... like beyond immediate neighoburs.. dont offer our own definition
+
+Hi Dhruvesh, I went through the proposal and the paper. Thanks for sharing those. I wanted to clarify the anchor probe before implementing.
+
+For a prompt P, gold completion x = x1...xT, and anchor set A, we reveal the true token xi for positions i in A and keep the rest masked. For each remaining masked position i, I think confidence should be teacher-forced gold confidence: p(x_i | z_A, i), right?
+
+Current plan:
+
+Use LLaDA-8B and Dream-7B on GSM8K and HumanEval.
+
+First check whether a useful single anchor exists by revealing one ground-truth token and measuring before/after gold confidence on the remaining masked positions. Plot p_gt_i vs sequence position, and track score / summed IG.
+
+Repeat greedily for k anchors.
+
+As layout controls, choose k anchors in prefix, suffix, middle cluster, and maximally separated positions, then compare before/after scores at matched k. I assume we always reveal the true token xi at its own position i, and only vary which indices are revealed.
+
+How should we define non-local influence? Is it simply influence beyond immediate neighboring positions?
+
+Does this sound like the right setup?
+
+
+Hi Dhruvesh, I went through the proposal and the paper. Thanks for sharing those. I wanted to clarify the anchor probe before implementing.
+
+For a prompt P, gold completion x = x1...xT, and anchor set A, we reveal the true token xi for positions i in A and keep the rest masked. For each remaining masked position i, I think confidence should be teacher-forced gold confidence: p(x_i | z_A, i), right?
+
+Current plan:
+
+
+
+Use LLaDA-8B and Dream-7B on GSM8K and HumanEval (prompt->completion).
+
+First check whether a useful single anchor exists by revealing one ground-truth token and measuring before/after gold confidence on the remaining masked positions. Plot p_gt_i vs sequence position, and track score / summed IG.
+
+Repeat greedily for k anchors.
+
+As layout controls, choose k anchors in prefix, suffix, middle cluster, and maximally separated positions, then compare before/after scores at matched k. I assume we always reveal the true token xi at its own position i, and only vary which indices are revealed.
+
+How should we define non-local influence? Is it simply influence beyond immediate neighboring positions?
+
+Does this sound like the right setup? (edited)
+
+sent this waiting for his reply before implementing
+
+Thought for 4s
+Good. That message is clear and asks the right blocking questions.
+
+While waiting, do not implement the full experiment. Prepare only the non-controversial scaffolding:
+
+Load LLaDA / Dream.
+
+Load 5–10 GSM8K and HumanEval examples.
+
+Make prompt/completion tokenization.
+
+Create z_A from anchor indices.
+
+Write forward-pass code that returns p_gt_i = p(x_i | z_A, i) for all masked positions.
+
+Do not decide final metric/layout/nonlocal threshold until he replies.
+
+The likely answers:
+
+If he says yes, use p_gt, then implement teacher-forced gold logprob/NLL.
+
+If he says use max probability, then it becomes more decoding-behavior aligned, but noisier because of PCG/UNCODE-style confidence bias.
+
+If he says both, use:
+
+primary: p_gt / gold logprob
+secondary: max-token confidence
+For layout control, your interpretation is almost certainly right: reveal true token at its own position, vary only indices.
+
+
+ok now do this
+step:1 implmene tllada8b and deream 7b models
+models.py-> contains both the mdoels
+anchors.py-> pick next k(1 to 10) for e.g. anchors either via max info gain or prefix orsuffic or mid or maximally seperated)
+sampling.py-> has way to sample using information gain and set anchors
+plots.py-> has plots as k progresses wrt p each plot for each k across seqlen ...across seqlen wrt ig prefix suffic and equally separated and scores of ig for each max score highlighted
+datasets.py-> choose prompt->completetion so we have the token replacing for each at each place they are tokens end of the day right ?
+have option for gsm8k, humaneval
+metrics.py-> to compute score ig wrt.
+
+Thought for 2m 6s
+Implemented scaffold as a zip:
+
+Download mdm_anchor_probe.zip
+
+It contains:
+
+mdm_anchor_probe/
+  requirements.txt
+  README.md
+  run_probe.py
+  anchor_probe/
+    models.py
+    datasets.py
+    anchors.py
+    sampling.py
+    metrics.py
+    plots.py
+Model wrappers use the public HF model IDs:
+
+GSAI-ML/LLaDA-8B-Instruct
+Dream-org/Dream-v0-Instruct-7B
+LLaDA’s HF page shows AutoModelForCausalLM.from_pretrained(..., trust_remote_code=True) usage, while Dream’s page shows AutoModel.from_pretrained(..., trust_remote_code=True) usage. 
+
+Core metric implemented:
+
+p_gt_i = p_theta(x_i | z_A, i)
+
+IG(A) = sum over still-masked q [
+  log p_theta(x_q | z_A, q)
+  -
+  log p_theta(x_q | z_empty, q)
+]
+Run example:
+
+cd mdm_anchor_probe
+pip install -r requirements.txt
+
+python run_probe.py \
+  --model llada8b \
+  --dataset gsm8k \
+  --n-examples 2 \
+  --max-completion-tokens 64 \
+  --kmax 3 \
+  --outdir outputs
+Dream:
+
+python run_probe.py \
+  --model dream7b \
+  --dataset humaneval \
+  --n-examples 2 \
+  --max-completion-tokens 128 \
+  --kmax 3 \
+  --outdir outputs
+Outputs:
+
+single_anchor.csv
+greedy.csv
+layout.csv
+layout_summary.csv
+pgt_by_position.png
+single_anchor_ig.png
+layout_ig_logp.png
+greedy_positions.png
+I did not run the 8B models in this environment, so first run should be treated as a smoke test on your GPU.
+
+Voice chat ended
+
+
+
+
+
+

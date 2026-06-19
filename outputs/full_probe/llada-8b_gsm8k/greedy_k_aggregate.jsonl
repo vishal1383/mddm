@@ -1,0 +1,10 @@
+{"k": 1, "n": 20, "mean_information_gain": 105.34281323880423, "mean_p_gt_gain": 9.161352046499783, "mean_score_after": 0.14140645189851286}
+{"k": 2, "n": 20, "mean_information_gain": 66.60133640198437, "mean_p_gt_gain": 5.957372239479917, "mean_score_after": 0.20895686854562387}
+{"k": 3, "n": 20, "mean_information_gain": 44.57601490488851, "mean_p_gt_gain": 4.438181311963464, "mean_score_after": 0.2531308798888223}
+{"k": 4, "n": 20, "mean_information_gain": 36.41161347224943, "mean_p_gt_gain": 6.187610494125988, "mean_score_after": 0.3063872549314012}
+{"k": 5, "n": 20, "mean_information_gain": 25.59929325583853, "mean_p_gt_gain": 4.436041010344815, "mean_score_after": 0.34255081685348665}
+{"k": 6, "n": 20, "mean_information_gain": 18.204199695132026, "mean_p_gt_gain": 2.823386688740725, "mean_score_after": 0.37204074363756806}
+{"k": 7, "n": 20, "mean_information_gain": 9.78054755410668, "mean_p_gt_gain": 1.2410629401025814, "mean_score_after": 0.3840835819797467}
+{"k": 8, "n": 20, "mean_information_gain": 7.575549363346897, "mean_p_gt_gain": 0.9675553206094749, "mean_score_after": 0.3908366102430921}
+{"k": 9, "n": 20, "mean_information_gain": 6.08958956235981, "mean_p_gt_gain": 1.1651227309755043, "mean_score_after": 0.39770731776754176}
+{"k": 10, "n": 20, "mean_information_gain": 2.209551285344787, "mean_p_gt_gain": 1.0702801315812864, "mean_score_after": 0.4050294041983505}

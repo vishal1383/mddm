@@ -1,0 +1,10 @@
+{"layout": "greedy_ig", "k": 1, "n": 1, "mean_information_gain": 52.27621275186539, "mean_p_gt_gain": 11.012230524293273, "mean_score_before": 0.08430435901642898, "mean_score_after": 0.43953760173556683}
+{"layout": "greedy_ig", "k": 2, "n": 1, "mean_information_gain": 85.67305085528642, "mean_p_gt_gain": 17.378479862411268, "mean_score_before": 0.08140879654837742, "mean_score_after": 0.660691458628753}
+{"layout": "maximally_separated", "k": 1, "n": 1, "mean_information_gain": -1.9617034196853638, "mean_p_gt_gain": -0.34995654806130005, "mean_score_before": 0.08313826595838603, "mean_score_after": 0.0718493450531828}
+{"layout": "maximally_separated", "k": 2, "n": 1, "mean_information_gain": 12.5610659327358, "mean_p_gt_gain": 0.9350411291218279, "mean_score_before": 0.08604496550184043, "mean_score_after": 0.11721300313923469}
+{"layout": "middle_cluster", "k": 1, "n": 1, "mean_information_gain": -1.9617034196853638, "mean_p_gt_gain": -0.34995654806130005, "mean_score_before": 0.08313826595838603, "mean_score_after": 0.0718493450531828}
+{"layout": "middle_cluster", "k": 2, "n": 1, "mean_information_gain": 23.688267707824707, "mean_p_gt_gain": 5.54165651603239, "mean_score_before": 0.08536336320654149, "mean_score_after": 0.2700852470742878}
+{"layout": "prefix", "k": 1, "n": 1, "mean_information_gain": 3.2416537404060364, "mean_p_gt_gain": 0.2526754633379369, "mean_score_before": 0.08326948750658952, "mean_score_after": 0.0914203089045875}
+{"layout": "prefix", "k": 2, "n": 1, "mean_information_gain": 8.778616547584534, "mean_p_gt_gain": 0.9014995554354073, "mean_score_before": 0.08234540849194522, "mean_score_after": 0.11239539367312545}
+{"layout": "suffix", "k": 1, "n": 1, "mean_information_gain": 4.3754787519574165, "mean_p_gt_gain": 0.3370742146937573, "mean_score_before": 0.08434018979747018, "mean_score_after": 0.09521355156178493}
+{"layout": "suffix", "k": 2, "n": 1, "mean_information_gain": 16.39848120510578, "mean_p_gt_gain": 2.5089204572777817, "mean_score_before": 0.08715143785299612, "mean_score_after": 0.17078211976225552}
