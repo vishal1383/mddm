@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from .types import ConfidenceResult, EncodedExample, ProbeExample
+from .types import ConfidenceResult, DecodeResult, DecodeStep, EncodedExample, ProbeExample
 
 
 MODEL_IDS = {
@@ -71,9 +71,19 @@ class MDMProbeModel:
         max_completion_tokens: int | None = None,
     ) -> EncodedExample:
         prompt_ids = self._encode_prompt(example.prompt)
-        completion_ids = self.tokenizer(example.completion, add_special_tokens=False)["input_ids"]
+        full_completion_ids = self.tokenizer(example.completion, add_special_tokens=False)["input_ids"]
+        completion_ids = list(full_completion_ids)
         if max_completion_tokens is not None:
             completion_ids = completion_ids[:max_completion_tokens]
+        metadata = dict(example.metadata)
+        metadata.update(
+            {
+                "full_completion_token_count": len(full_completion_ids),
+                "target_completion_token_count": len(completion_ids),
+                "max_completion_tokens": max_completion_tokens,
+                "completion_truncated": len(completion_ids) < len(full_completion_ids),
+            }
+        )
 
         return EncodedExample(
             example_id=example.example_id,
@@ -82,7 +92,7 @@ class MDMProbeModel:
             completion_token_texts=[self.tokenizer.decode([t]) for t in completion_ids],
             prompt_text=example.prompt,
             completion_text=example.completion,
-            metadata=example.metadata,
+            metadata=metadata,
             anchor_positions=_anchor_positions(self.tokenizer, completion_ids, self.mask_token_id),
         )
 
@@ -127,6 +137,7 @@ class MDMProbeModel:
                     -1,
                     target_ids.view(1, -1, 1).expand(len(batch_anchors), -1, 1),
                 ).squeeze(-1)
+                max_probs = probs.max(dim=-1).values
                 entropy = -(probs * log_probs).sum(dim=-1)
 
             for row, anchors in enumerate(batch_anchors):
@@ -134,10 +145,99 @@ class MDMProbeModel:
                     ConfidenceResult(
                         anchor_positions=anchors,
                         p_gt=[float(v) for v in gold_probs[row].cpu().tolist()],
+                        max_p=[float(v) for v in max_probs[row].cpu().tolist()],
                         entropy=[float(v) for v in entropy[row].cpu().tolist()],
                     )
                 )
         return results
+
+    def decode_completion(
+        self,
+        encoded: EncodedExample,
+        anchor_positions: Iterable[int] = (),
+        *,
+        steps: int | None = None,
+        tokens_per_step: int | None = None,
+        suppress_mask_token: bool = True,
+    ) -> DecodeResult:
+        """Greedy confidence decode from a masked completion with fixed gold anchors."""
+
+        import math
+        import torch
+
+        anchors = _clean_anchors(anchor_positions, encoded.completion_length)
+        anchor_set = set(anchors)
+        completion_ids = [
+            token_id if pos in anchor_set else self.mask_token_id
+            for pos, token_id in enumerate(encoded.completion_token_ids)
+        ]
+        masked = {pos for pos in range(encoded.completion_length) if pos not in anchor_set}
+        decode_steps: list[DecodeStep] = []
+
+        if tokens_per_step is not None and tokens_per_step <= 0:
+            raise ValueError("tokens_per_step must be positive when set")
+        if steps is not None and steps <= 0:
+            raise ValueError("steps must be positive when set")
+        if steps is None and tokens_per_step is None:
+            steps = max(1, len(masked))
+
+        step_idx = 0
+        while masked:
+            step_idx += 1
+            input_ids = torch.tensor(
+                [encoded.prompt_token_ids + completion_ids],
+                dtype=torch.long,
+                device=self.device,
+            )
+            with torch.no_grad():
+                outputs = self.model(input_ids=input_ids)
+                if not hasattr(outputs, "logits"):
+                    raise TypeError("Model output has no .logits; use an LM-head model for decoding.")
+                completion_logits = self._completion_logits(outputs.logits, encoded).float()[0]
+                if suppress_mask_token:
+                    completion_logits[:, self.mask_token_id] = -torch.inf
+                probs = torch.softmax(completion_logits, dim=-1)
+                max_probs, pred_ids = probs.max(dim=-1)
+
+            if tokens_per_step is not None:
+                fill_count = min(tokens_per_step, len(masked))
+            else:
+                assert steps is not None
+                remaining_steps = max(1, steps - step_idx + 1)
+                fill_count = min(len(masked), max(1, math.ceil(len(masked) / remaining_steps)))
+
+            ranked = sorted(
+                masked,
+                key=lambda pos: float(max_probs[pos].detach().cpu()),
+                reverse=True,
+            )
+            fill_positions = ranked[:fill_count]
+            fill_token_ids = [int(pred_ids[pos].detach().cpu()) for pos in fill_positions]
+            fill_confidences = [float(max_probs[pos].detach().cpu()) for pos in fill_positions]
+
+            for pos, token_id in zip(fill_positions, fill_token_ids):
+                completion_ids[pos] = token_id
+                masked.remove(pos)
+
+            decode_steps.append(
+                DecodeStep(
+                    step=step_idx,
+                    filled_positions=list(fill_positions),
+                    filled_token_ids=fill_token_ids,
+                    filled_token_texts=[self.tokenizer.decode([token_id]) for token_id in fill_token_ids],
+                    confidences=fill_confidences,
+                    remaining_masked=len(masked),
+                )
+            )
+
+        completion_text = self.tokenizer.decode(completion_ids, skip_special_tokens=True)
+        return DecodeResult(
+            anchor_positions=anchors,
+            completion_token_ids=[int(token_id) for token_id in completion_ids],
+            completion_token_texts=[self.tokenizer.decode([token_id]) for token_id in completion_ids],
+            completion_text=completion_text,
+            steps=decode_steps,
+        )
 
     def _input_ids(self, encoded: EncodedExample, anchors: tuple[int, ...]) -> list[int]:
         anchor_set = set(anchors)
@@ -146,6 +246,13 @@ class MDMProbeModel:
             for i, token_id in enumerate(encoded.completion_token_ids)
         ]
         return encoded.prompt_token_ids + completion
+
+    def _completion_logits(self, logits, encoded: EncodedExample):
+        start_pos = encoded.prompt_length - self.logit_shift
+        end_pos = encoded.prompt_length + encoded.completion_length - self.logit_shift
+        if start_pos < 0:
+            raise ValueError("logit_shift is larger than the prompt length")
+        return logits[:, start_pos:end_pos, :]
 
     def _encode_prompt(self, prompt: str) -> list[int]:
         if self.prompt_format == "chat":

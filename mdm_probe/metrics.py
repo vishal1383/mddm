@@ -14,7 +14,19 @@ def score_p_gt(
     *,
     reduction: str = "mean",
 ) -> float:
-    values = [p_gt[pos] for pos in remaining_positions(len(p_gt), anchors)]
+    return score_values(p_gt, anchors, reduction=reduction)
+
+
+def score_values(
+    values_by_position: list[float],
+    anchors: set[int] | list[int] | tuple[int, ...],
+    *,
+    reduction: str = "mean",
+) -> float:
+    values = [
+        values_by_position[pos]
+        for pos in remaining_positions(len(values_by_position), anchors)
+    ]
     if not values:
         return 0.0
     if reduction == "sum":
@@ -30,8 +42,26 @@ def p_gt_gain(
     *,
     exclude: set[int] | list[int] | tuple[int, ...],
 ) -> tuple[float, list[float]]:
-    positions = _target_positions(len(before.p_gt), exclude)
-    deltas = [after.p_gt[pos] - before.p_gt[pos] for pos in positions]
+    return value_gain(before.p_gt, after.p_gt, exclude=exclude)
+
+
+def max_p_gain(
+    before: ConfidenceResult,
+    after: ConfidenceResult,
+    *,
+    exclude: set[int] | list[int] | tuple[int, ...],
+) -> tuple[float, list[float]]:
+    return value_gain(before.max_p, after.max_p, exclude=exclude)
+
+
+def value_gain(
+    before: list[float],
+    after: list[float],
+    *,
+    exclude: set[int] | list[int] | tuple[int, ...],
+) -> tuple[float, list[float]]:
+    positions = _target_positions(len(before), exclude)
+    deltas = [after[pos] - before[pos] for pos in positions]
     return float(sum(deltas)), [float(v) for v in deltas]
 
 

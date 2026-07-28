@@ -29,6 +29,7 @@ def layout_anchors(
     positions: list[int],
     k: int,
     greedy_chain: list[int] | None = None,
+    greedy_name: str = "greedy_ig",
 ) -> dict[str, list[int]]:
     k = min(k, len(positions))
     layouts = {
@@ -38,5 +39,5 @@ def layout_anchors(
         "maximally_separated": maximally_separated_anchors(positions, k),
     }
     if greedy_chain is not None:
-        layouts["greedy_ig"] = sorted(greedy_chain[:k])
+        layouts[greedy_name] = sorted(greedy_chain[:k])
     return layouts

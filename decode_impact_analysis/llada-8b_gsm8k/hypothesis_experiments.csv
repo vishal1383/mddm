@@ -1,0 +1,6 @@
+evidence,experiment,hypothesis,resolution_signal
+Isolated digits appear in many regressions.,Expand selected numeric anchors to contiguous number spans.,Partial-number anchors,Regressions decrease at k=5..10.
+First harmful greedy anchors are usually late.,Exclude anchors after 75% of target window.,Late-fragment anchors,Late-k accuracy improves or stays near k=2.
+Partial final-answer digit hits are over-represented in harms.,Ban final-answer digits or force full final-answer span.,Final-answer fragment anchors,Full-span helps while partial-span hurts.
+IG peak occurs early; later high-IG anchors hurt answer accuracy.,Use answer-aware anchor scoring on a subset.,Objective mismatch,Answer-aware anchors do not show same k=10 degradation.
+Gold rationale may conflict with model-generated path.,Anchor standard decoded tokens at same positions.,Gold-path conflict,Harms drop when anchors match model path.

@@ -75,16 +75,19 @@ def main() -> None:
                 encoded,
                 batch_size=args.batch_size,
                 score_reduction=args.score_reduction,
+                selection_metric=args.select_metric,
             )
             single_rows.extend(rows)
 
         if args.probe in {"greedy", "layout", "all"}:
+            greedy_name = greedy_layout_name(args.select_metric)
             rows, candidate_rows = run_greedy_k_probe(
                 model,
                 encoded,
                 max_k=args.max_k,
                 batch_size=args.batch_size,
                 score_reduction=args.score_reduction,
+                selection_metric=args.select_metric,
             )
             greedy_chain = [row["selected_anchor_position"] for row in rows]
             if args.probe in {"greedy", "all"}:
@@ -97,6 +100,7 @@ def main() -> None:
                 encoded,
                 max_k=args.max_k,
                 greedy_chain=greedy_chain,
+                greedy_name=greedy_name,
                 batch_size=args.batch_size,
                 score_reduction=args.score_reduction,
             )
@@ -108,7 +112,7 @@ def main() -> None:
     if single_rows:
         write_rows(out_dir / "single_anchor.jsonl", single_rows)
         write_rows(out_dir / "single_anchor.csv", single_rows)
-        single_best = best_rows(single_rows, "example_id", "information_gain")
+        single_best = best_rows(single_rows, "example_id", args.select_metric)
         write_rows(out_dir / "single_anchor_best_by_prompt.jsonl", single_best)
         write_rows(out_dir / "single_anchor_best_by_prompt.csv", single_best)
         write_rows(out_dir / "single_anchor_aggregate.jsonl", aggregate_rows(single_best, []))
@@ -152,6 +156,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-completion-tokens", type=int, default=128)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--score-reduction", choices=["sum", "mean"], default="mean")
+    parser.add_argument(
+        "--select-metric",
+        choices=["information_gain", "p_gt_gain", "max_p_gain"],
+        default="information_gain",
+        help="Metric used to pick greedy anchors; default preserves the original entropy-IG behavior.",
+    )
     parser.add_argument("--out-dir", default="outputs/mdm_probe")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--mask-token-id", type=int, default=None)
@@ -198,12 +208,28 @@ def aggregate_rows(rows: list[dict], group_keys: list[str]) -> list[dict]:
     for key, group in sorted(groups.items()):
         aggregate = {k: v for k, v in zip(group_keys, key)}
         aggregate["n"] = len(group)
-        for metric in ["information_gain", "p_gt_gain", "score_before", "score_after"]:
+        for metric in [
+            "information_gain",
+            "p_gt_gain",
+            "max_p_gain",
+            "score_before",
+            "score_after",
+            "max_p_score_before",
+            "max_p_score_after",
+        ]:
             values = [row[metric] for row in group if isinstance(row.get(metric), (int, float))]
             if values:
                 aggregate[f"mean_{metric}"] = sum(values) / len(values)
         out.append(aggregate)
     return out
+
+
+def greedy_layout_name(select_metric: str) -> str:
+    return {
+        "information_gain": "greedy_ig",
+        "p_gt_gain": "greedy_p_gt",
+        "max_p_gain": "greedy_max_p",
+    }[select_metric]
 
 
 def _csv_value(value: Any) -> Any:
