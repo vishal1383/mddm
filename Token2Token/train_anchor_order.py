@@ -82,7 +82,13 @@ def main() -> None:
             "anchors": len(targets),
             "anchor_tokens": [target["token"] for target in targets],
             "anchor_positions": [int(target["gold_position"]) for target in targets],
-            "ig_scores": [float(target["ig_score"]) for target in targets],
+            "selection_metric": record.get(
+                "selection_metric", "greedy_entropy_reduction"
+            ),
+            "selection_scores": [
+                float(target.get("selection_score", target.get("ig_score", 0.0)))
+                for target in targets
+            ],
             "elapsed_seconds": time.time() - started,
         }
         with log_path.open("a", encoding="utf-8") as handle:
@@ -197,12 +203,16 @@ def validate_target_provenance(path: Path, records: list[dict]) -> None:
     if not metadata_path.exists():
         raise ValueError(f"missing target metadata: {metadata_path}")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    expected = "frozen_base_greedy_ig"
-    if metadata.get("target_source") != expected:
+    allowed = {
+        "frozen_base_greedy_ig",
+        "frozen_base_confidence_rollout",
+    }
+    if metadata.get("target_source") not in allowed:
         raise ValueError(
-            f"anchor targets must come from {expected}; got "
+            "anchor targets must come from a frozen base model; got "
             f"{metadata.get('target_source')!r}"
         )
+    expected = metadata["target_source"]
     invalid = {
         record.get("target_source")
         for record in records

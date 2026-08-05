@@ -57,6 +57,33 @@ bash Token2Token/run_anchor_order.sh
 This experiment has no Gaussian prior, placement marginalization,
 relative-order loss, policy network, or Token2Token correction.
 
+## Decoder-rollout anchor targets
+
+The decoder-aligned selector replaces entropy-reduction IG with the behavior we
+ultimately want to improve. For each candidate gold token, it fixes that token
+on the current canvas, runs ordinary confidence decoding for a configurable
+number of steps, and counts newly committed tokens that exactly match the gold
+tokens at their positions. The candidate with the highest count is committed,
+and the process repeats greedily. The fixed candidate itself is not counted.
+
+The defaults target two-token parallel decoding and select two anchors:
+
+```bash
+python3 -m Token2Token.precompute_rollout_targets \
+  --examples 7473 \
+  --anchors 2 \
+  --rollout-k 2 \
+  --rollout-steps 4 \
+  --rollout-batch-size 32 \
+  --resume \
+  --output outputs/token2token/anchor_targets/gsm8k_rollout_k2.jsonl
+```
+
+There is no confidence threshold in this score. `rollout-steps` controls the
+lookahead cost: four steps score up to eight normal `k=2` commitments per
+candidate. The resulting frozen target file is compatible with
+`train_anchor_order.py`.
+
 ## Test
 
 ```bash

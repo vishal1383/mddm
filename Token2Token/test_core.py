@@ -22,6 +22,7 @@ from Token2Token.eval_gsm8k import (
     parse_k_values,
 )
 from Token2Token.eval_lm1b_loss import parse_mask_ratios
+from Token2Token.precompute_rollout_targets import greedy_rollout_targets
 from Token2Token.train_standard import masked_denoising_loss
 from Token2Token.summarize_gsm8k_sweep import build_rows, render_report
 from Token2Token.select_best_epoch import summarize_epochs
@@ -66,6 +67,22 @@ class ToyDecodeModel(torch.nn.Module):
         for position in range(1, input_ids.shape[1]):
             logits[:, position, position] = float(position)
         return SimpleNamespace(logits=logits)
+
+
+class ToyRolloutModel(torch.nn.Module):
+    def forward(self, input_ids, use_cache=False):
+        del use_cache
+        gold = [1, 2, 3]
+        rows = []
+        for input_row in input_ids:
+            canvas = input_row[1:]
+            helpful_anchor = int(canvas[0]) == gold[0]
+            logits = torch.zeros(len(input_row), 6)
+            for position in range(len(canvas)):
+                predicted = gold[position] if helpful_anchor else 5
+                logits[position + 1, predicted] = 10.0
+            rows.append(logits)
+        return SimpleNamespace(logits=torch.stack(rows))
 
 
 class CoreTests(unittest.TestCase):
@@ -114,6 +131,27 @@ class CoreTests(unittest.TestCase):
         self.assertEqual([target.gold_position for target in targets], [1, 0, 2])
         self.assertEqual([target.index for target in targets], [0, 1, 2])
         self.assertEqual(len(scores), 3)
+
+    def test_rollout_targets_maximize_correct_standard_decodes(self):
+        candidates = [
+            Target(0, 1, "one", 0),
+            Target(1, 2, "two", 1),
+            Target(2, 3, "three", 2),
+        ]
+        targets, scores = greedy_rollout_targets(
+            ToyRolloutModel(),
+            [9],
+            [1, 2, 3],
+            candidates,
+            0,
+            count=1,
+            rollout_steps=2,
+            rollout_k=1,
+            batch_size=3,
+            device="cpu",
+        )
+        self.assertEqual(targets[0].gold_position, 0)
+        self.assertEqual(scores[0], {"correct": 2, "committed": 2})
 
     def test_standard_confidence_decode(self):
         canvas = [0, 0, 0, 0]
@@ -267,6 +305,15 @@ class CoreTests(unittest.TestCase):
                 encoding="utf-8",
             )
             validate_target_provenance(path, [{"target_source": None}])
+            metadata.write_text(
+                json.dumps(
+                    {"target_source": "frozen_base_confidence_rollout"}
+                ),
+                encoding="utf-8",
+            )
+            validate_target_provenance(
+                path, [{"target_source": "frozen_base_confidence_rollout"}]
+            )
             metadata.write_text(
                 json.dumps({"target_source": "v1_online_ig_recovered"}),
                 encoding="utf-8",
