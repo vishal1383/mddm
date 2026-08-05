@@ -113,21 +113,19 @@ correctness.
 
 ## Global 95% threshold-unlock experiment
 
-The current V2 experiment uses the entire 128-token completion canvas. For each
-round, frozen base LLaDA considers gold catalyst candidates whose current gold
-probability is at least half of the best candidate probability. After
-temporarily revealing a candidate, it finds every remaining position whose
-top-1 confidence is at least 95%. The selected catalyst maximizes the number of
-those predictions that are already correct, with fewer confident mistakes and
-higher catalyst probability used as tie-breakers.
+The current V2 experiment uses the entire 128-token completion canvas. At each
+round, count the remaining positions that base LLaDA predicts correctly with at
+least 95% confidence. Temporarily reveal each plausible gold anchor and count
+again. Select the anchor maximizing `correct_after - correct_before`, breaking
+ties by `correct_after`, then by anchor probability.
 
-The saved unlock set includes both correct and incorrect predictions above the
-threshold. Training applies gold-token CE to all of them, because inference
-cannot use gold correctness to filter a confident mistake. The gold catalyst
-and corrected unlock set are then teacher-forced before the next round. If no
-position crosses the threshold, only the catalyst is placed, guaranteeing
-progress. Target generation writes a `.summary.json` containing threshold
-density, zero-unlock frequency, and implied tokens per forward.
+Anchor CE trains that one gold token from the canvas before placement. Next,
+place the anchor and every other token that is correctly predicted above 95%,
+then restart the process from the updated canvas. If no other token qualifies,
+only the anchor is placed, so a round may advance by exactly one token. The
+unlocked tokens update the teacher-forced canvas but are not additional anchor
+CE targets. Target generation reports mean tokens placed per round, the
+zero-unlock frequency, and implied tokens per forward.
 
 Generate a smoke target set first:
 
@@ -136,15 +134,15 @@ python3 -m Token2Token.precompute_threshold_unlock_targets \
   --examples 5 \
   --confidence-threshold 0.95 \
   --candidate-batch-size 8 \
-  --output outputs/token2token/threshold_unlock/gsm8k_smoke_t095.jsonl
+  --output outputs/token2token/threshold_unlock/gsm8k_smoke_t095_gain.jsonl
 ```
 
-After inspecting `gsm8k_smoke_t095.summary.json`, generate all targets by using
-`--examples 7473 --resume`. Train the LoRA with threshold-trajectory CE plus an
-ordinary masked-denoising CE batch that preserves normal generation:
+After inspecting `gsm8k_smoke_t095_gain.summary.json`, generate all targets by
+using `--examples 7473 --resume`. Train the LoRA with anchor CE plus an ordinary
+masked-denoising CE batch that preserves normal generation:
 
 ```bash
-TARGETS_FILE=outputs/token2token/threshold_unlock/gsm8k_train_t095.jsonl \
+TARGETS_FILE=outputs/token2token/threshold_unlock/gsm8k_train_t095_gain.jsonl \
 OUTPUT_DIR=outputs/token2token/threshold_unlock/llada8b_gsm8k_t095 \
 bash Token2Token/run_threshold_unlock.sh
 ```

@@ -34,9 +34,9 @@ from Token2Token.precompute_local_unlock_targets import (
 from Token2Token.precompute_rollout_targets import greedy_rollout_targets
 from Token2Token.precompute_threshold_unlock_targets import (
     candidate_key,
+    correct_threshold_positions,
     plausible_candidates,
     threshold_unlock_trajectory,
-    threshold_positions,
 )
 from Token2Token.train_standard import masked_denoising_loss
 from Token2Token.train_threshold_unlock import trajectory_stages
@@ -263,8 +263,8 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(parse_thresholds(".95,.9,.95"), [0.95, 0.9])
         self.assertEqual(threshold_tag(0.95), "t0p95")
 
-    def test_threshold_set_includes_wrong_predictions_for_correction(self):
-        unlocked = threshold_positions(
+    def test_threshold_set_keeps_only_correct_high_confidence_predictions(self):
+        unlocked = correct_threshold_positions(
             [0, 0, 7, 0, 0],
             [1, 2, 7, 4, 5],
             [1, 9, 7, 4, 8],
@@ -273,8 +273,7 @@ class CoreTests(unittest.TestCase):
             mask_token_id=0,
             threshold=0.95,
         )
-        self.assertEqual([item["gold_position"] for item in unlocked], [1, 3])
-        self.assertEqual([item["was_correct"] for item in unlocked], [False, True])
+        self.assertEqual([item["gold_position"] for item in unlocked], [3])
 
     def test_threshold_target_trajectory_places_catalyst_then_burst(self):
         rounds = threshold_unlock_trajectory(
@@ -293,25 +292,39 @@ class CoreTests(unittest.TestCase):
         self.assertEqual([item["gold_position"] for item in rounds[0]["unlocked"]], [1])
         self.assertEqual(rounds[1]["catalyst"]["gold_position"], 2)
 
-    def test_threshold_candidate_is_plausible_and_prefers_safe_density(self):
+    def test_threshold_candidate_uses_gain_then_after_count(self):
         log_probabilities = {0: -0.1, 1: -0.3, 2: -2.0}
         self.assertEqual(
             plausible_candidates([0, 1, 2], log_probabilities, 0.5), [0, 1]
         )
-        safe = {
+        larger_gain = {
             "position": 0,
             "gold_log_probability": -0.3,
-            "unlocked": [{"was_correct": True}],
+            "correct_before": 0,
+            "correct_after": [{}, {}],
         }
-        risky = {
+        larger_after_but_smaller_gain = {
             "position": 1,
             "gold_log_probability": -0.1,
-            "unlocked": [
-                {"was_correct": True},
-                {"was_correct": False},
-            ],
+            "correct_before": 2,
+            "correct_after": [{}, {}, {}],
         }
-        self.assertGreater(candidate_key(safe), candidate_key(risky))
+        self.assertGreater(
+            candidate_key(larger_gain), candidate_key(larger_after_but_smaller_gain)
+        )
+        after_three = {
+            "position": 2,
+            "gold_log_probability": -0.5,
+            "correct_before": 1,
+            "correct_after": [{}, {}, {}],
+        }
+        after_two = {
+            "position": 3,
+            "gold_log_probability": -0.1,
+            "correct_before": 0,
+            "correct_after": [{}, {}],
+        }
+        self.assertGreater(candidate_key(after_three), candidate_key(after_two))
 
     def test_threshold_trajectory_stages_fill_each_token_once(self):
         record = {
@@ -333,12 +346,9 @@ class CoreTests(unittest.TestCase):
             ],
         }
         stages = trajectory_stages(record, 0)
-        self.assertEqual(
-            [item["kind"] for item in stages], ["catalyst", "unlock", "catalyst"]
-        )
+        self.assertEqual([item["kind"] for item in stages], ["catalyst", "catalyst"])
         self.assertEqual(stages[0]["canvas"], [0, 0, 0, 0])
-        self.assertEqual(stages[1]["canvas"], [0, 2, 0, 0])
-        self.assertEqual(stages[2]["canvas"], [1, 2, 0, 4])
+        self.assertEqual(stages[1]["canvas"], [1, 2, 0, 4])
 
     def test_batched_top_k_confidence_decode(self):
         canvases = batch_confidence_decode(

@@ -13,7 +13,7 @@ import torch
 from Token2Token.precompute_anchor_targets import count_rows, source_fields
 from Token2Token.train import MODEL_ID, encode_record, load_base_model, record_stream
 
-TARGET_SOURCE = "frozen_base_threshold_unlock"
+TARGET_SOURCE = "frozen_base_threshold_gain"
 
 
 def main() -> None:
@@ -59,7 +59,7 @@ def main() -> None:
             "dataset": args.dataset,
             "example_id": example_id,
             "target_source": TARGET_SOURCE,
-            "selection_metric": "correct_predictions_above_threshold",
+            "selection_metric": "correct_95_after_minus_before",
             "confidence_threshold": args.confidence_threshold,
             "candidate_prob_ratio": args.candidate_prob_ratio,
             "source": source_fields(args.dataset, source_record[1]),
@@ -71,11 +71,11 @@ def main() -> None:
             handle.write(json.dumps(row, ensure_ascii=True) + "\n")
         written += 1
         unlocked = sum(len(item["unlocked"]) for item in rounds)
-        correct = sum(item["correct_above_threshold"] for item in rounds)
+        mean_placed = len(gold_ids) / len(rounds)
         print(
             f"example={written}/{args.examples} id={example_id} "
             f"tokens={len(gold_ids)} rounds={len(rounds)} "
-            f"unlocked={unlocked} correct_before_training={correct}"
+            f"unlocked={unlocked} mean_placed={mean_placed:.3f}"
         )
 
     summary = summarize_target_file(output)
@@ -125,6 +125,9 @@ def threshold_unlock_trajectory(
                     remaining,
                     mask_token_id,
                 )
+                baseline_prediction, baseline_confidence = confidence_summary(
+                    baseline_logits, mask_token_id
+                )
                 del baseline_logits
                 eligible = plausible_candidates(
                     remaining,
@@ -146,7 +149,16 @@ def threshold_unlock_trajectory(
                         prediction, confidence = confidence_summary(
                             logits[row_index], mask_token_id
                         )
-                        unlocked = threshold_positions(
+                        correct_before = correct_threshold_positions(
+                            canvas,
+                            gold_ids,
+                            baseline_prediction,
+                            baseline_confidence,
+                            candidate_position=position,
+                            mask_token_id=mask_token_id,
+                            threshold=confidence_threshold,
+                        )
+                        correct_after = correct_threshold_positions(
                             canvas,
                             gold_ids,
                             prediction,
@@ -160,7 +172,8 @@ def threshold_unlock_trajectory(
                             "gold_log_probability": candidate_log_probabilities[
                                 position
                             ],
-                            "unlocked": unlocked,
+                            "correct_before": len(correct_before),
+                            "correct_after": correct_after,
                         }
                         if best is None or candidate_key(candidate) > candidate_key(
                             best
@@ -171,7 +184,9 @@ def threshold_unlock_trajectory(
                     raise RuntimeError("no candidate available for a non-empty canvas")
                 catalyst_position = int(best["position"])
                 catalyst_token_id = int(gold_ids[catalyst_position])
-                unlocked = best["unlocked"]
+                unlocked = best["correct_after"]
+                correct_before = int(best["correct_before"])
+                correct_after = len(unlocked)
                 rounds.append(
                     {
                         "round": len(rounds) + 1,
@@ -184,13 +199,10 @@ def threshold_unlock_trajectory(
                             ),
                         },
                         "eligible_candidates": len(eligible),
-                        "above_threshold": len(unlocked),
-                        "correct_above_threshold": sum(
-                            int(item["was_correct"]) for item in unlocked
-                        ),
-                        "incorrect_above_threshold": sum(
-                            not item["was_correct"] for item in unlocked
-                        ),
+                        "correct_95_before": correct_before,
+                        "correct_95_after": correct_after,
+                        "correct_95_gain": correct_after - correct_before,
+                        "tokens_placed": 1 + correct_after,
                         "unlocked": unlocked,
                     }
                 )
@@ -243,7 +255,7 @@ def confidence_summary(logits, mask_token_id):
     return prediction.cpu().tolist(), confidence.cpu().tolist()
 
 
-def threshold_positions(
+def correct_threshold_positions(
     canvas,
     gold_ids,
     prediction,
@@ -260,13 +272,14 @@ def threshold_positions(
         if position == candidate_position or confidence[position] < threshold:
             continue
         predicted_token_id = int(prediction[position])
+        if predicted_token_id != int(gold_ids[position]):
+            continue
         unlocked.append(
             {
                 "gold_position": position,
                 "token_id": int(gold_ids[position]),
                 "predicted_token_id": predicted_token_id,
                 "confidence": float(confidence[position]),
-                "was_correct": predicted_token_id == int(gold_ids[position]),
                 "distance_from_catalyst": position - candidate_position,
                 "normalized_position": position / max(1, len(canvas) - 1),
             }
@@ -276,12 +289,11 @@ def threshold_positions(
 
 
 def candidate_key(candidate):
-    unlocked = candidate["unlocked"]
-    correct = sum(int(item["was_correct"]) for item in unlocked)
-    incorrect = len(unlocked) - correct
+    after = len(candidate["correct_after"])
+    gain = after - int(candidate["correct_before"])
     return (
-        correct,
-        -incorrect,
+        gain,
+        after,
         candidate["gold_log_probability"],
         -candidate["position"],
     )
@@ -292,7 +304,9 @@ def summarize_target_file(path: Path):
     completion_tokens = 0
     rounds = 0
     unlocked = 0
-    correct = 0
+    total_before = 0
+    total_after = 0
+    total_gain = 0
     zero_unlock_rounds = 0
     implied_forwards = 0
     histogram = Counter()
@@ -313,7 +327,9 @@ def summarize_target_file(path: Path):
                     implied_forwards += 1
                 remaining -= count
                 unlocked += count
-                correct += int(item["correct_above_threshold"])
+                total_before += int(item["correct_95_before"])
+                total_after += int(item["correct_95_after"])
+                total_gain += int(item["correct_95_gain"])
                 zero_unlock_rounds += int(count == 0)
                 histogram[count] += 1
             if remaining != 0:
@@ -325,12 +341,14 @@ def summarize_target_file(path: Path):
         "completion_tokens": completion_tokens,
         "rounds": rounds,
         "unlocked_tokens": unlocked,
-        "correct_before_training": correct,
-        "incorrect_to_correct_with_supervision": unlocked - correct,
+        "total_correct_95_before": total_before,
+        "total_correct_95_after": total_after,
+        "total_correct_95_gain": total_gain,
+        "mean_correct_95_gain": total_gain / rounds if rounds else 0.0,
         "zero_unlock_rounds": zero_unlock_rounds,
         "zero_unlock_fraction": zero_unlock_rounds / rounds if rounds else 0.0,
         "mean_unlocked_per_round": unlocked / rounds if rounds else 0.0,
-        "mean_tokens_per_cycle": completion_tokens / rounds if rounds else 0.0,
+        "mean_tokens_placed_per_round": completion_tokens / rounds if rounds else 0.0,
         "implied_model_forwards": implied_forwards,
         "implied_tokens_per_forward": (
             completion_tokens / implied_forwards if implied_forwards else 0.0
@@ -370,7 +388,7 @@ def write_metadata(output: Path, args) -> None:
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Precompute global confidence-threshold unlock trajectories"
+        description="Precompute anchors by global correct-95% after-minus-before gain"
     )
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--dataset", choices=["gsm8k", "lm1b"], default="gsm8k")
@@ -387,7 +405,7 @@ def parse_args():
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
         "--output",
-        default="outputs/token2token/threshold_unlock/gsm8k_train_t095.jsonl",
+        default="outputs/token2token/threshold_unlock/gsm8k_train_t095_gain.jsonl",
     )
     args = parser.parse_args()
     if args.examples <= 0 or args.candidate_batch_size <= 0:

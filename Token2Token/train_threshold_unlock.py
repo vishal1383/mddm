@@ -60,11 +60,10 @@ def main() -> None:
                 [item["canvas"] for item in model_stages],
                 device,
             )
-            catalyst_loss, unlock_loss = trajectory_losses(logits[:-1], sampled)
+            catalyst_loss = trajectory_loss(logits[:-1], sampled)
             standard_loss = stage_loss(logits[-1], standard_stage)
             loss = (
                 args.catalyst_loss_weight * catalyst_loss
-                + args.unlock_loss_weight * unlock_loss
                 + args.standard_loss_weight * standard_loss
             )
         if not bool(torch.isfinite(loss)):
@@ -75,26 +74,16 @@ def main() -> None:
 
         step += 1
         global_step = args.step_offset + step
-        catalyst_stages = sum(item["kind"] == "catalyst" for item in sampled)
-        unlock_stages = sum(item["kind"] == "unlock" for item in sampled)
-        unlock_tokens = sum(
-            len(item["positions"]) for item in sampled if item["kind"] == "unlock"
-        )
         row = {
             "step": global_step,
             "dataset": record["dataset"],
             "example_id": record["example_id"],
             "loss": float(loss.detach().cpu()),
             "catalyst_loss": float(catalyst_loss.detach().cpu()),
-            "unlock_loss": float(unlock_loss.detach().cpu()),
             "standard_loss": float(standard_loss.detach().cpu()),
             "catalyst_loss_weight": args.catalyst_loss_weight,
-            "unlock_loss_weight": args.unlock_loss_weight,
             "standard_loss_weight": args.standard_loss_weight,
             "sampled_stages": len(sampled),
-            "sampled_catalyst_stages": catalyst_stages,
-            "sampled_unlock_stages": unlock_stages,
-            "sampled_unlock_tokens": unlock_tokens,
             "mask_ratio": mask_ratio,
             "elapsed_seconds": time.time() - started,
         }
@@ -103,9 +92,8 @@ def main() -> None:
         print(
             f"step={global_step} loss={row['loss']:.4f} "
             f"catalyst={row['catalyst_loss']:.4f} "
-            f"unlock={row['unlock_loss']:.4f} "
             f"standard={row['standard_loss']:.4f} "
-            f"stages={len(sampled)} unlocked_tokens={unlock_tokens}"
+            f"catalyst_stages={len(sampled)}"
         )
         if args.save_every and step % args.save_every == 0:
             save_adapter(model, tokenizer, output / f"checkpoint-{global_step:06d}")
@@ -141,26 +129,11 @@ def trajectory_stages(record, mask_token_id):
         )
         canvas[catalyst_position] = catalyst_token_id
 
-        unlock_positions = []
-        unlock_token_ids = []
         for target in item["unlocked"]:
             position = int(target["gold_position"])
             token_id = int(target["token_id"])
             validate_gold_target(canvas, gold_ids, position, token_id, mask_token_id)
-            unlock_positions.append(position)
-            unlock_token_ids.append(token_id)
-        if unlock_positions:
-            stages.append(
-                {
-                    "kind": "unlock",
-                    "round": expected_round,
-                    "canvas": list(canvas),
-                    "positions": unlock_positions,
-                    "token_ids": unlock_token_ids,
-                }
-            )
-            for position, token_id in zip(unlock_positions, unlock_token_ids):
-                canvas[position] = token_id
+            canvas[position] = token_id
 
     if canvas != gold_ids:
         missing = [
@@ -184,17 +157,7 @@ def validate_gold_target(canvas, gold_ids, position, token_id, mask_token_id):
 def sample_stages(stages, count, rng):
     if count <= 0 or count >= len(stages):
         return list(stages)
-    catalysts = [item for item in stages if item["kind"] == "catalyst"]
-    unlocks = [item for item in stages if item["kind"] == "unlock"]
-    catalyst_count = min(len(catalysts), (count + 1) // 2)
-    unlock_count = min(len(unlocks), count - catalyst_count)
-    remaining = count - catalyst_count - unlock_count
-    if remaining:
-        extra_catalysts = min(len(catalysts) - catalyst_count, remaining)
-        catalyst_count += extra_catalysts
-        unlock_count += min(len(unlocks) - unlock_count, remaining - extra_catalysts)
-    selected = rng.sample(catalysts, catalyst_count) + rng.sample(unlocks, unlock_count)
-    return sorted(selected, key=lambda item: (item["round"], item["kind"] == "unlock"))
+    return sorted(rng.sample(stages, count), key=lambda item: item["round"])
 
 
 def random_denoising_stage(gold_ids, mask_token_id, min_mask_ratio, max_mask_ratio):
@@ -229,19 +192,12 @@ def batched_completion_logits(model, prompt_ids, canvases, device):
     return outputs.logits[:, len(prompt_ids) : len(prompt_ids) + len(canvases[0])]
 
 
-def trajectory_losses(logits, stages):
-    catalyst = []
-    unlock = []
-    for row_logits, stage in zip(logits, stages):
-        losses = stage_token_losses(row_logits, stage)
-        if stage["kind"] == "catalyst":
-            catalyst.append(losses)
-        else:
-            unlock.append(losses)
-    zero = logits.sum() * 0.0
-    catalyst_loss = torch.cat(catalyst).mean() if catalyst else zero
-    unlock_loss = torch.cat(unlock).mean() if unlock else zero
-    return catalyst_loss, unlock_loss
+def trajectory_loss(logits, stages):
+    losses = [
+        stage_token_losses(row_logits, stage)
+        for row_logits, stage in zip(logits, stages)
+    ]
+    return torch.cat(losses).mean()
 
 
 def stage_token_losses(logits, stage):
@@ -287,7 +243,7 @@ def autocast(device, enabled):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Train LoRA on catalyst and confidence-threshold unlock stages"
+        description="Train LoRA on after-minus-before catalyst targets"
     )
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--adapter-path")
@@ -296,7 +252,6 @@ def parse_args():
     parser.add_argument("--step-offset", type=int, default=0)
     parser.add_argument("--stages-per-example", type=int, default=8)
     parser.add_argument("--catalyst-loss-weight", type=float, default=1.0)
-    parser.add_argument("--unlock-loss-weight", type=float, default=1.0)
     parser.add_argument("--standard-loss-weight", type=float, default=1.0)
     parser.add_argument("--min-mask-ratio", type=float, default=0.15)
     parser.add_argument("--max-mask-ratio", type=float, default=1.0)
@@ -323,7 +278,6 @@ def parse_args():
         parser.error("mask ratios must satisfy 0 < min <= max <= 1")
     weights = [
         args.catalyst_loss_weight,
-        args.unlock_loss_weight,
         args.standard_loss_weight,
     ]
     if any(weight < 0 for weight in weights) or not any(weights):
