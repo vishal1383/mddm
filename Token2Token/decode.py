@@ -8,6 +8,7 @@ from pathlib import Path
 
 import torch
 
+from Token2Token.precompute_threshold_unlock_targets import is_allowed_anchor_token
 from Token2Token.train import MODEL_ID, _token_ids, completion_logits, load_base_model
 
 
@@ -147,8 +148,33 @@ def threshold_unlock_decode(
                 for position, token_id in enumerate(canvas)
                 if token_id == mask_token_id
             ]
+            allowed = [
+                position
+                for position in masked
+                if is_allowed_anchor_token(int(token_ids[position]), tokenizer)
+            ]
+            if not allowed:
+                cleanup_position = max(
+                    masked, key=lambda position: float(confidence[position])
+                )
+                cleanup = fill_positions(
+                    tokenizer,
+                    canvas,
+                    [cleanup_position],
+                    token_ids,
+                    confidence,
+                )
+                trace.append(
+                    {
+                        "cycle": cycle,
+                        "forward": forward_pass,
+                        "phase": "cleanup",
+                        "filled": cleanup,
+                    }
+                )
+                continue
             catalyst_position = max(
-                masked, key=lambda position: float(confidence[position])
+                allowed, key=lambda position: float(confidence[position])
             )
             catalyst = fill_positions(
                 tokenizer,

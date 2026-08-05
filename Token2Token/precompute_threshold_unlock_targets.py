@@ -13,7 +13,7 @@ import torch
 from Token2Token.precompute_anchor_targets import count_rows, source_fields
 from Token2Token.train import MODEL_ID, encode_record, load_base_model, record_stream
 
-TARGET_SOURCE = "frozen_base_threshold_gain"
+TARGET_SOURCE = "frozen_base_threshold_gain_text_anchors"
 
 
 def main() -> None:
@@ -44,7 +44,7 @@ def main() -> None:
             skipped += 1
             continue
         prompt_ids, gold_ids, example_id = encoded
-        rounds = threshold_unlock_trajectory(
+        rounds, residual = threshold_unlock_trajectory(
             model,
             tokenizer,
             prompt_ids,
@@ -62,20 +62,24 @@ def main() -> None:
             "selection_metric": "correct_95_after_minus_before",
             "confidence_threshold": args.confidence_threshold,
             "candidate_prob_ratio": args.candidate_prob_ratio,
+            "anchor_filter": "alphabetic_tokens_only",
             "source": source_fields(args.dataset, source_record[1]),
             "prompt_ids": prompt_ids,
             "gold_ids": gold_ids,
             "rounds": rounds,
+            "residual": residual,
         }
         with output.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row, ensure_ascii=True) + "\n")
         written += 1
         unlocked = sum(len(item["unlocked"]) for item in rounds)
-        mean_placed = len(gold_ids) / len(rounds)
+        placed = sum(item["tokens_placed"] for item in rounds)
+        mean_placed = placed / len(rounds) if rounds else 0.0
         print(
             f"example={written}/{args.examples} id={example_id} "
             f"tokens={len(gold_ids)} rounds={len(rounds)} "
-            f"unlocked={unlocked} mean_placed={mean_placed:.3f}"
+            f"unlocked={unlocked} residual={len(residual)} "
+            f"mean_placed={mean_placed:.3f}"
         )
 
     summary = summarize_target_file(output)
@@ -116,13 +120,20 @@ def threshold_unlock_trajectory(
                     for position, token_id in enumerate(canvas)
                     if token_id == mask_token_id
                 ]
+                anchor_candidates = [
+                    position
+                    for position in remaining
+                    if is_allowed_anchor_token(gold_ids[position], tokenizer)
+                ]
+                if not anchor_candidates:
+                    break
                 baseline_logits = completion_logits_batch(
                     model, prompt_ids, [canvas], device
                 )[0]
                 candidate_log_probabilities = gold_log_probabilities(
                     baseline_logits,
                     gold_ids,
-                    remaining,
+                    anchor_candidates,
                     mask_token_id,
                 )
                 baseline_prediction, baseline_confidence = confidence_summary(
@@ -130,7 +141,7 @@ def threshold_unlock_trajectory(
                 )
                 del baseline_logits
                 eligible = plausible_candidates(
-                    remaining,
+                    anchor_candidates,
                     candidate_log_probabilities,
                     candidate_prob_ratio,
                 )
@@ -212,7 +223,23 @@ def threshold_unlock_trajectory(
                     canvas[position] = int(gold_ids[position])
     finally:
         model.train(was_training)
-    return rounds
+    residual = [
+        {
+            "gold_position": position,
+            "token_id": int(gold_ids[position]),
+            "token": tokenizer.decode([int(gold_ids[position])]),
+        }
+        for position, token_id in enumerate(canvas)
+        if token_id == mask_token_id
+    ]
+    return rounds, residual
+
+
+def is_allowed_anchor_token(token_id, tokenizer):
+    if int(token_id) in set(getattr(tokenizer, "all_special_ids", [])):
+        return False
+    text = tokenizer.decode([int(token_id)]).strip()
+    return bool(text) and text.isalpha()
 
 
 def completion_logits_batch(model, prompt_ids, canvases, device):
@@ -307,6 +334,9 @@ def summarize_target_file(path: Path):
     total_before = 0
     total_after = 0
     total_gain = 0
+    placed_tokens = 0
+    residual_tokens = 0
+    examples_with_residual = 0
     zero_unlock_rounds = 0
     implied_forwards = 0
     histogram = Counter()
@@ -330,8 +360,13 @@ def summarize_target_file(path: Path):
                 total_before += int(item["correct_95_before"])
                 total_after += int(item["correct_95_after"])
                 total_gain += int(item["correct_95_gain"])
+                placed_tokens += int(item["tokens_placed"])
                 zero_unlock_rounds += int(count == 0)
                 histogram[count] += 1
+            residual = record.get("residual", [])
+            residual_tokens += len(residual)
+            examples_with_residual += int(bool(residual))
+            remaining -= len(residual)
             if remaining != 0:
                 raise ValueError(
                     f"incomplete trajectory for example {record.get('example_id')}"
@@ -345,13 +380,20 @@ def summarize_target_file(path: Path):
         "total_correct_95_after": total_after,
         "total_correct_95_gain": total_gain,
         "mean_correct_95_gain": total_gain / rounds if rounds else 0.0,
+        "placed_tokens": placed_tokens,
+        "residual_tokens": residual_tokens,
+        "examples_with_residual": examples_with_residual,
         "zero_unlock_rounds": zero_unlock_rounds,
         "zero_unlock_fraction": zero_unlock_rounds / rounds if rounds else 0.0,
         "mean_unlocked_per_round": unlocked / rounds if rounds else 0.0,
-        "mean_tokens_placed_per_round": completion_tokens / rounds if rounds else 0.0,
-        "implied_model_forwards": implied_forwards,
+        "mean_tokens_placed_per_round": placed_tokens / rounds if rounds else 0.0,
+        "implied_anchor_model_forwards": implied_forwards,
+        "implied_cleanup_model_forwards": residual_tokens,
+        "implied_model_forwards": implied_forwards + residual_tokens,
         "implied_tokens_per_forward": (
-            completion_tokens / implied_forwards if implied_forwards else 0.0
+            completion_tokens / (implied_forwards + residual_tokens)
+            if implied_forwards + residual_tokens
+            else 0.0
         ),
         "unlock_count_histogram": dict(sorted(histogram.items())),
     }
@@ -363,6 +405,7 @@ def write_metadata(output: Path, args) -> None:
     metadata["output"] = str(output)
     metadata["target_source"] = TARGET_SOURCE
     metadata["selection_scope"] = "full_completion_canvas"
+    metadata["anchor_filter"] = "alphabetic_tokens_only"
     if metadata_path.exists() and args.resume:
         existing = json.loads(metadata_path.read_text(encoding="utf-8"))
         comparable = [
@@ -374,6 +417,7 @@ def write_metadata(output: Path, args) -> None:
             "seed",
             "target_source",
             "selection_scope",
+            "anchor_filter",
         ]
         if any(existing.get(key) != metadata.get(key) for key in comparable):
             raise ValueError("resume configuration does not match target metadata")
@@ -405,7 +449,7 @@ def parse_args():
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
         "--output",
-        default="outputs/token2token/threshold_unlock/gsm8k_train_t095_gain_max512.jsonl",
+        default="outputs/token2token/threshold_unlock/gsm8k_train_t095_gain_text_max512.jsonl",
     )
     args = parser.parse_args()
     if args.examples <= 0 or args.candidate_batch_size <= 0:

@@ -9,6 +9,7 @@ import time
 import torch
 
 from Token2Token.eval_gsm8k import extract_gsm8k_answer, read_jsonl
+from Token2Token.precompute_threshold_unlock_targets import is_allowed_anchor_token
 from Token2Token.train import MODEL_ID, _token_ids, load_base_model
 
 
@@ -71,6 +72,7 @@ def main() -> None:
                 args.completion_length,
                 mask_token_id,
                 confidence_threshold=threshold,
+                tokenizer=tokenizer,
                 device=device,
                 pad_token_id=(
                     tokenizer.pad_token_id
@@ -148,6 +150,7 @@ def batch_threshold_unlock_decode(
     mask_token_id,
     *,
     confidence_threshold,
+    tokenizer,
     device,
     pad_token_id,
 ):
@@ -172,7 +175,9 @@ def batch_threshold_unlock_decode(
     forwards = torch.zeros(len(canvases), device=device, dtype=torch.long)
     cycles = torch.zeros_like(forwards)
     catalyst_tokens = torch.zeros_like(forwards)
+    cleanup_tokens = torch.zeros_like(forwards)
     threshold_tokens = torch.zeros_like(forwards)
+    allowed_cache = {}
 
     with torch.no_grad():
         while bool(canvases.eq(mask_token_id).any()):
@@ -188,7 +193,13 @@ def batch_threshold_unlock_decode(
             )
             forwards[active] += 1
             cycles[active] += 1
-            catalyst_positions = confidence.masked_fill(~masked, -torch.inf).argmax(
+            allowed = allowed_prediction_mask(
+                token_ids, masked, tokenizer, allowed_cache
+            )
+            has_anchor = allowed.any(dim=1) & active
+            cleanup = active & ~has_anchor
+            selectable = torch.where(has_anchor.unsqueeze(1), allowed, masked)
+            catalyst_positions = confidence.masked_fill(~selectable, -torch.inf).argmax(
                 dim=1
             )
             active_rows = torch.where(active)[0]
@@ -196,11 +207,14 @@ def batch_threshold_unlock_decode(
             canvases[active_rows, active_positions] = token_ids[
                 active_rows, active_positions
             ]
-            catalyst_tokens[active] += 1
+            catalyst_tokens[has_anchor] += 1
+            cleanup_tokens[cleanup] += 1
 
             masked = canvases.eq(mask_token_id)
-            active = masked.any(dim=1)
-            if not bool(active.any()):
+            unlock_active = masked.any(dim=1) & has_anchor
+            if not bool(unlock_active.any()):
+                if bool(masked.any()):
+                    continue
                 break
             confidence, token_ids = batch_canvas_predictions(
                 model,
@@ -210,9 +224,9 @@ def batch_threshold_unlock_decode(
                 completion_attention,
                 mask_token_id,
             )
-            forwards[active] += 1
+            forwards[unlock_active] += 1
             selected = masked & confidence.ge(confidence_threshold)
-            selected &= active.unsqueeze(1)
+            selected &= unlock_active.unsqueeze(1)
             threshold_tokens += selected.sum(dim=1)
             canvases[selected] = token_ids[selected]
 
@@ -224,11 +238,30 @@ def batch_threshold_unlock_decode(
                 "cycles": int(cycles[index]),
                 "model_forwards": row_forwards,
                 "catalyst_tokens": int(catalyst_tokens[index]),
+                "cleanup_tokens": int(cleanup_tokens[index]),
                 "threshold_tokens": int(threshold_tokens[index]),
                 "tokens_per_forward": completion_length / row_forwards,
             }
         )
     return canvases.detach().cpu().tolist(), rows
+
+
+def allowed_prediction_mask(token_ids, masked, tokenizer, cache):
+    token_rows = token_ids.detach().cpu().tolist()
+    masked_rows = masked.detach().cpu().tolist()
+    allowed = []
+    for row_tokens, row_masked in zip(token_rows, masked_rows):
+        row = []
+        for token_id, is_masked in zip(row_tokens, row_masked):
+            if not is_masked:
+                row.append(False)
+                continue
+            token_id = int(token_id)
+            if token_id not in cache:
+                cache[token_id] = is_allowed_anchor_token(token_id, tokenizer)
+            row.append(cache[token_id])
+        allowed.append(row)
+    return torch.tensor(allowed, device=masked.device, dtype=torch.bool)
 
 
 def batch_canvas_predictions(

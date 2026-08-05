@@ -135,6 +135,12 @@ def trajectory_stages(record, mask_token_id):
             validate_gold_target(canvas, gold_ids, position, token_id, mask_token_id)
             canvas[position] = token_id
 
+    for target in record.get("residual", []):
+        position = int(target["gold_position"])
+        token_id = int(target["token_id"])
+        validate_gold_target(canvas, gold_ids, position, token_id, mask_token_id)
+        canvas[position] = token_id
+
     if canvas != gold_ids:
         missing = [
             position

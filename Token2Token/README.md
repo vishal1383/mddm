@@ -115,9 +115,12 @@ correctness.
 
 The current V2 experiment uses the entire variable-length gold completion
 canvas, capped at 512 tokens. All observed GSM8K training solutions fit this
-cap. At each round, count the remaining positions that base LLaDA predicts
-correctly with at least 95% confidence. Temporarily reveal each plausible gold
-anchor and count again. Select the anchor maximizing
+cap. Anchor candidates must decode to alphabetic text after surrounding
+whitespace is stripped. Whitespace, numbers, punctuation, markup, and tokenizer
+special tokens can be unlocked but cannot be selected as anchors. At each
+round, count the remaining positions that base LLaDA predicts correctly with at
+least 95% confidence. Temporarily reveal each plausible gold anchor and count
+again. Select the anchor maximizing
 `correct_after - correct_before`, breaking ties by `correct_after`, then by
 anchor probability.
 
@@ -137,15 +140,15 @@ python3 -m Token2Token.precompute_threshold_unlock_targets \
   --confidence-threshold 0.95 \
   --max-completion-tokens 512 \
   --candidate-batch-size 8 \
-  --output outputs/token2token/threshold_unlock/gsm8k_smoke_t095_gain_max512.jsonl
+  --output outputs/token2token/threshold_unlock/gsm8k_smoke_t095_gain_text_max512.jsonl
 ```
 
-After inspecting `gsm8k_smoke_t095_gain_max512.summary.json`, generate all targets by
-using `--examples 7473 --resume`. Train the LoRA with anchor CE plus an ordinary
-masked-denoising CE batch that preserves normal generation:
+After inspecting `gsm8k_smoke_t095_gain_text_max512.summary.json`, generate all
+targets by using `--examples 7473 --resume`. Train the LoRA with anchor CE plus
+an ordinary masked-denoising CE batch that preserves normal generation:
 
 ```bash
-TARGETS_FILE=outputs/token2token/threshold_unlock/gsm8k_train_t095_gain_max512.jsonl \
+TARGETS_FILE=outputs/token2token/threshold_unlock/gsm8k_train_t095_gain_text_max512.jsonl \
 OUTPUT_DIR=outputs/token2token/threshold_unlock/llada8b_gsm8k_t095 \
 bash Token2Token/run_threshold_unlock.sh
 ```
@@ -153,6 +156,10 @@ bash Token2Token/run_threshold_unlock.sh
 Matching inference commits one highest-confidence catalyst, reruns the model,
 then commits all remaining positions above the same threshold. Evaluate the
 adapter and optionally sweep lower thresholds after measuring 95% density:
+
+Only alphabetic predictions are eligible for the catalyst step. When no such
+prediction remains, inference commits one highest-confidence residual token as
+cleanup without treating it as an anchor.
 
 ```bash
 python3 -m Token2Token.eval_threshold_gsm8k \

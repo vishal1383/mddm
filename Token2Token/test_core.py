@@ -35,6 +35,7 @@ from Token2Token.precompute_rollout_targets import greedy_rollout_targets
 from Token2Token.precompute_threshold_unlock_targets import (
     candidate_key,
     correct_threshold_positions,
+    is_allowed_anchor_token,
     plausible_candidates,
     threshold_unlock_trajectory,
 )
@@ -57,6 +58,11 @@ class ToyTokenizer:
 
     def decode(self, token_ids):
         return str(token_ids[0])
+
+
+class ToyTextTokenizer(ToyTokenizer):
+    def decode(self, token_ids):
+        return {1: "one", 2: " two", 3: "three"}.get(token_ids[0], "word")
 
 
 class ToyIGModel(torch.nn.Module):
@@ -235,7 +241,7 @@ class CoreTests(unittest.TestCase):
         canvas = [0, 0, 0]
         trace = threshold_unlock_decode(
             ToyThresholdModel(),
-            ToyTokenizer(),
+            ToyTextTokenizer(),
             [9],
             canvas,
             0,
@@ -255,6 +261,7 @@ class CoreTests(unittest.TestCase):
             3,
             0,
             confidence_threshold=0.95,
+            tokenizer=ToyTextTokenizer(),
             device="cpu",
             pad_token_id=5,
         )
@@ -262,6 +269,22 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(all(item["threshold_tokens"] == 1 for item in stats))
         self.assertEqual(parse_thresholds(".95,.9,.95"), [0.95, 0.9])
         self.assertEqual(threshold_tag(0.95), "t0p95")
+
+    def test_threshold_decode_uses_cleanup_for_non_text_predictions(self):
+        canvases, stats = batch_threshold_unlock_decode(
+            ToyThresholdModel(),
+            [[9]],
+            3,
+            0,
+            confidence_threshold=0.95,
+            tokenizer=ToyTokenizer(),
+            device="cpu",
+            pad_token_id=5,
+        )
+        self.assertEqual(canvases, [[1, 2, 3]])
+        self.assertEqual(stats[0]["catalyst_tokens"], 0)
+        self.assertEqual(stats[0]["cleanup_tokens"], 3)
+        self.assertEqual(stats[0]["threshold_tokens"], 0)
 
     def test_threshold_set_keeps_only_correct_high_confidence_predictions(self):
         unlocked = correct_threshold_positions(
@@ -276,9 +299,9 @@ class CoreTests(unittest.TestCase):
         self.assertEqual([item["gold_position"] for item in unlocked], [3])
 
     def test_threshold_target_trajectory_places_catalyst_then_burst(self):
-        rounds = threshold_unlock_trajectory(
+        rounds, residual = threshold_unlock_trajectory(
             ToyThresholdModel(),
-            ToyTokenizer(),
+            ToyTextTokenizer(),
             [9],
             [1, 2, 3],
             0,
@@ -288,9 +311,43 @@ class CoreTests(unittest.TestCase):
             device="cpu",
         )
         self.assertEqual(len(rounds), 2)
+        self.assertEqual(residual, [])
         self.assertEqual(rounds[0]["catalyst"]["gold_position"], 0)
         self.assertEqual([item["gold_position"] for item in rounds[0]["unlocked"]], [1])
         self.assertEqual(rounds[1]["catalyst"]["gold_position"], 2)
+
+    def test_anchor_filter_rejects_whitespace_symbols_and_numbers(self):
+        class MixedTokenizer:
+            all_special_ids = [5]
+
+            def decode(self, token_ids):
+                return {
+                    1: " ",
+                    2: "<<",
+                    3: "42",
+                    4: " total",
+                    5: "special",
+                    6: "2nd",
+                }[token_ids[0]]
+
+        tokenizer = MixedTokenizer()
+        self.assertEqual(
+            [is_allowed_anchor_token(token_id, tokenizer) for token_id in range(1, 7)],
+            [False, False, False, True, False, False],
+        )
+        rounds, residual = threshold_unlock_trajectory(
+            ToyThresholdModel(),
+            tokenizer,
+            [9],
+            [1, 2, 3],
+            0,
+            confidence_threshold=0.95,
+            candidate_prob_ratio=0.5,
+            candidate_batch_size=2,
+            device="cpu",
+        )
+        self.assertEqual(rounds, [])
+        self.assertEqual([item["gold_position"] for item in residual], [0, 1, 2])
 
     def test_threshold_candidate_uses_gain_then_after_count(self):
         log_probabilities = {0: -0.1, 1: -0.3, 2: -2.0}
@@ -344,6 +401,7 @@ class CoreTests(unittest.TestCase):
                     "unlocked": [],
                 },
             ],
+            "residual": [],
         }
         stages = trajectory_stages(record, 0)
         self.assertEqual([item["kind"] for item in stages], ["catalyst", "catalyst"])
