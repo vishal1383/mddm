@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TARGETS_FILE="${TARGETS_FILE:-outputs/token2token/threshold_unlock/gsm8k_train_t095_gain.jsonl}"
+TARGETS_FILE="${TARGETS_FILE:-outputs/token2token/threshold_unlock/gsm8k_train_t095_gain_max512.jsonl}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/token2token/threshold_unlock/llada8b_gsm8k_t095}"
 MAX_STEPS="${MAX_STEPS:-7473}"
 STAGES_PER_EXAMPLE="${STAGES_PER_EXAMPLE:-8}"

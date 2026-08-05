@@ -396,7 +396,7 @@ def parse_args():
     parser.add_argument("--confidence-threshold", type=float, default=0.95)
     parser.add_argument("--candidate-prob-ratio", type=float, default=0.5)
     parser.add_argument("--candidate-batch-size", type=int, default=8)
-    parser.add_argument("--max-completion-tokens", type=int, default=128)
+    parser.add_argument("--max-completion-tokens", type=int, default=512)
     parser.add_argument("--lm1b-prompt-tokens", type=int, default=32)
     parser.add_argument("--lm1b-dataset", default="FrankCCCCC/lm1b")
     parser.add_argument("--shuffle-buffer", type=int, default=10_000)
@@ -405,7 +405,7 @@ def parse_args():
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
         "--output",
-        default="outputs/token2token/threshold_unlock/gsm8k_train_t095_gain.jsonl",
+        default="outputs/token2token/threshold_unlock/gsm8k_train_t095_gain_max512.jsonl",
     )
     args = parser.parse_args()
     if args.examples <= 0 or args.candidate_batch_size <= 0:

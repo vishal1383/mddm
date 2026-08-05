@@ -113,11 +113,13 @@ correctness.
 
 ## Global 95% threshold-unlock experiment
 
-The current V2 experiment uses the entire 128-token completion canvas. At each
-round, count the remaining positions that base LLaDA predicts correctly with at
-least 95% confidence. Temporarily reveal each plausible gold anchor and count
-again. Select the anchor maximizing `correct_after - correct_before`, breaking
-ties by `correct_after`, then by anchor probability.
+The current V2 experiment uses the entire variable-length gold completion
+canvas, capped at 512 tokens. All observed GSM8K training solutions fit this
+cap. At each round, count the remaining positions that base LLaDA predicts
+correctly with at least 95% confidence. Temporarily reveal each plausible gold
+anchor and count again. Select the anchor maximizing
+`correct_after - correct_before`, breaking ties by `correct_after`, then by
+anchor probability.
 
 Anchor CE trains that one gold token from the canvas before placement. Next,
 place the anchor and every other token that is correctly predicted above 95%,
@@ -133,16 +135,17 @@ Generate a smoke target set first:
 python3 -m Token2Token.precompute_threshold_unlock_targets \
   --examples 5 \
   --confidence-threshold 0.95 \
+  --max-completion-tokens 512 \
   --candidate-batch-size 8 \
-  --output outputs/token2token/threshold_unlock/gsm8k_smoke_t095_gain.jsonl
+  --output outputs/token2token/threshold_unlock/gsm8k_smoke_t095_gain_max512.jsonl
 ```
 
-After inspecting `gsm8k_smoke_t095_gain.summary.json`, generate all targets by
+After inspecting `gsm8k_smoke_t095_gain_max512.summary.json`, generate all targets by
 using `--examples 7473 --resume`. Train the LoRA with anchor CE plus an ordinary
 masked-denoising CE batch that preserves normal generation:
 
 ```bash
-TARGETS_FILE=outputs/token2token/threshold_unlock/gsm8k_train_t095_gain.jsonl \
+TARGETS_FILE=outputs/token2token/threshold_unlock/gsm8k_train_t095_gain_max512.jsonl \
 OUTPUT_DIR=outputs/token2token/threshold_unlock/llada8b_gsm8k_t095 \
 bash Token2Token/run_threshold_unlock.sh
 ```
