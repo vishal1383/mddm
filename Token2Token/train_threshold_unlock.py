@@ -44,13 +44,17 @@ def main() -> None:
         gold_ids = list(map(int, record["gold_ids"]))
         stages = trajectory_stages(record, mask_token_id)
         sampled = sample_stages(stages, args.stages_per_example, random)
-        standard_stage, mask_ratio = random_denoising_stage(
-            gold_ids,
-            mask_token_id,
-            args.min_mask_ratio,
-            args.max_mask_ratio,
-        )
-        model_stages = sampled + [standard_stage]
+        model_stages = list(sampled)
+        standard_stage = None
+        mask_ratio = None
+        if args.standard_loss_weight:
+            standard_stage, mask_ratio = random_denoising_stage(
+                gold_ids,
+                mask_token_id,
+                args.min_mask_ratio,
+                args.max_mask_ratio,
+            )
+            model_stages.append(standard_stage)
 
         optimizer.zero_grad(set_to_none=True)
         with autocast(device, args.bf16):
@@ -60,8 +64,11 @@ def main() -> None:
                 [item["canvas"] for item in model_stages],
                 device,
             )
-            catalyst_loss = trajectory_loss(logits[:-1], sampled)
-            standard_loss = stage_loss(logits[-1], standard_stage)
+            catalyst_logits = logits[: len(sampled)]
+            catalyst_loss = trajectory_loss(catalyst_logits, sampled)
+            standard_loss = catalyst_loss.detach() * 0.0
+            if standard_stage is not None:
+                standard_loss = stage_loss(logits[-1], standard_stage)
             loss = (
                 args.catalyst_loss_weight * catalyst_loss
                 + args.standard_loss_weight * standard_loss
@@ -258,7 +265,7 @@ def parse_args():
     parser.add_argument("--step-offset", type=int, default=0)
     parser.add_argument("--stages-per-example", type=int, default=8)
     parser.add_argument("--catalyst-loss-weight", type=float, default=1.0)
-    parser.add_argument("--standard-loss-weight", type=float, default=1.0)
+    parser.add_argument("--standard-loss-weight", type=float, default=0.0)
     parser.add_argument("--min-mask-ratio", type=float, default=0.15)
     parser.add_argument("--max-mask-ratio", type=float, default=1.0)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
@@ -273,7 +280,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--output-dir",
-        default="outputs/token2token/threshold_unlock/llada8b_gsm8k_t095",
+        default="outputs/token2token/threshold_unlock/llada8b_gsm8k_t095_text_q07_anchor_only",
     )
     args = parser.parse_args()
     if args.max_steps <= 0 or args.stages_per_example <= 0:

@@ -438,7 +438,7 @@ def parse_args():
     parser.add_argument("--dataset", choices=["gsm8k", "lm1b"], default="gsm8k")
     parser.add_argument("--examples", type=int, default=7_473)
     parser.add_argument("--confidence-threshold", type=float, default=0.95)
-    parser.add_argument("--candidate-prob-ratio", type=float, default=0.5)
+    parser.add_argument("--candidate-prob-ratio", type=float, default=0.7)
     parser.add_argument("--candidate-batch-size", type=int, default=8)
     parser.add_argument("--max-completion-tokens", type=int, default=512)
     parser.add_argument("--lm1b-prompt-tokens", type=int, default=32)
@@ -449,7 +449,7 @@ def parse_args():
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
         "--output",
-        default="outputs/token2token/threshold_unlock/gsm8k_train_t095_gain_text_max512.jsonl",
+        default="outputs/token2token/threshold_unlock/gsm8k_train_t095_gain_text_q07_max512.jsonl",
     )
     args = parser.parse_args()
     if args.examples <= 0 or args.candidate_batch_size <= 0:

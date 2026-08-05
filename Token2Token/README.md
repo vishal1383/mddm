@@ -120,7 +120,8 @@ whitespace is stripped. Whitespace, numbers, punctuation, markup, and tokenizer
 special tokens can be unlocked but cannot be selected as anchors. At each
 round, count the remaining positions that base LLaDA predicts correctly with at
 least 95% confidence. Temporarily reveal each plausible gold anchor and count
-again. Select the anchor maximizing
+again. A plausible anchor must have at least 70% of the best current gold-token
+probability. Select the anchor maximizing
 `correct_after - correct_before`, breaking ties by `correct_after`, then by
 anchor probability.
 
@@ -138,18 +139,21 @@ Generate a smoke target set first:
 python3 -m Token2Token.precompute_threshold_unlock_targets \
   --examples 5 \
   --confidence-threshold 0.95 \
+  --candidate-prob-ratio 0.7 \
   --max-completion-tokens 512 \
   --candidate-batch-size 8 \
-  --output outputs/token2token/threshold_unlock/gsm8k_smoke_t095_gain_text_max512.jsonl
+  --output outputs/token2token/threshold_unlock/gsm8k_smoke_t095_gain_text_q07_max512.jsonl
 ```
 
-After inspecting `gsm8k_smoke_t095_gain_text_max512.summary.json`, generate all
-targets by using `--examples 7473 --resume`. Train the LoRA with anchor CE plus
-an ordinary masked-denoising CE batch that preserves normal generation:
+After inspecting `gsm8k_smoke_t095_gain_text_q07_max512.summary.json`, generate
+all targets by using `--examples 7473 --resume`. The strict first pass trains
+only anchor CE. It does not apply CE to unlocked tokens or an auxiliary
+denoising canvas:
 
 ```bash
-TARGETS_FILE=outputs/token2token/threshold_unlock/gsm8k_train_t095_gain_text_max512.jsonl \
-OUTPUT_DIR=outputs/token2token/threshold_unlock/llada8b_gsm8k_t095 \
+TARGETS_FILE=outputs/token2token/threshold_unlock/gsm8k_train_t095_gain_text_q07_max512.jsonl \
+OUTPUT_DIR=outputs/token2token/threshold_unlock/llada8b_gsm8k_t095_text_q07_anchor_only \
+STANDARD_LOSS_WEIGHT=0 \
 bash Token2Token/run_threshold_unlock.sh
 ```
 
@@ -163,7 +167,7 @@ cleanup without treating it as an anchor.
 
 ```bash
 python3 -m Token2Token.eval_threshold_gsm8k \
-  --adapter-path outputs/token2token/threshold_unlock/llada8b_gsm8k_t095/adapter-final \
+  --adapter-path outputs/token2token/threshold_unlock/llada8b_gsm8k_t095_text_q07_anchor_only/adapter-final \
   --model-label threshold_lora \
   --thresholds 0.95,0.90 \
   --resume \
