@@ -22,6 +22,10 @@ from Token2Token.eval_gsm8k import (
     parse_k_values,
 )
 from Token2Token.eval_lm1b_loss import parse_mask_ratios
+from Token2Token.precompute_local_unlock_targets import (
+    greedy_local_unlock_targets,
+    shifted_window,
+)
 from Token2Token.precompute_rollout_targets import greedy_rollout_targets
 from Token2Token.train_standard import masked_denoising_loss
 from Token2Token.summarize_gsm8k_sweep import build_rows, render_report
@@ -152,6 +156,30 @@ class CoreTests(unittest.TestCase):
         )
         self.assertEqual(targets[0].gold_position, 0)
         self.assertEqual(scores[0], {"correct": 2, "committed": 2})
+
+    def test_local_unlock_targets_maximize_new_top1_gold_tokens(self):
+        candidates = [
+            Target(0, 1, "one", 0),
+            Target(1, 2, "two", 1),
+            Target(2, 3, "three", 2),
+        ]
+        targets, scores = greedy_local_unlock_targets(
+            ToyRolloutModel(),
+            [9],
+            [1, 2, 3],
+            candidates,
+            0,
+            count=1,
+            window_size=3,
+            batch_size=3,
+            device="cpu",
+        )
+        self.assertEqual(targets[0].gold_position, 0)
+        self.assertEqual(scores[0]["gain"], 2)
+
+    def test_shifted_window_preserves_width_at_edges(self):
+        self.assertEqual(shifted_window(0, 20, 9), (0, 9))
+        self.assertEqual(shifted_window(19, 20, 9), (11, 20))
 
     def test_standard_confidence_decode(self):
         canvas = [0, 0, 0, 0]
@@ -313,6 +341,15 @@ class CoreTests(unittest.TestCase):
             )
             validate_target_provenance(
                 path, [{"target_source": "frozen_base_confidence_rollout"}]
+            )
+            metadata.write_text(
+                json.dumps(
+                    {"target_source": "frozen_base_local_top1_unlock"}
+                ),
+                encoding="utf-8",
+            )
+            validate_target_provenance(
+                path, [{"target_source": "frozen_base_local_top1_unlock"}]
             )
             metadata.write_text(
                 json.dumps({"target_source": "v1_online_ig_recovered"}),

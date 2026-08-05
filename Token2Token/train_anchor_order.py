@@ -206,6 +206,7 @@ def validate_target_provenance(path: Path, records: list[dict]) -> None:
     allowed = {
         "frozen_base_greedy_ig",
         "frozen_base_confidence_rollout",
+        "frozen_base_local_top1_unlock",
     }
     if metadata.get("target_source") not in allowed:
         raise ValueError(

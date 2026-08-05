@@ -84,6 +84,33 @@ lookahead cost: four steps score up to eight normal `k=2` commitments per
 candidate. The resulting frozen target file is compatible with
 `train_anchor_order.py`.
 
+## Local top-1 unlock targets
+
+The recommended next selector removes confidence thresholds and decoder-horizon
+choices. Starting from an all-mask canvas, it measures top-1 gold-token
+correctness in a fixed local window. For every candidate, it inserts that gold
+token and measures the change in the number of nearby positions whose gold
+token is now the model's argmax. The candidate itself and previously inserted
+anchors are excluded from the score. The maximum-gain candidate is inserted,
+and the process repeats for the next anchor. Candidate predictability is not a
+selection gate; anchor CE is responsible for teaching the model to predict the
+oracle-selected token first.
+
+```bash
+python3 -m Token2Token.precompute_local_unlock_targets \
+  --examples 7473 \
+  --anchors 2 \
+  --window-size 9 \
+  --candidate-batch-size 64 \
+  --resume \
+  --output outputs/token2token/anchor_targets/gsm8k_local_unlock.jsonl
+```
+
+The window shifts at sequence boundaries to preserve its width. The stored
+score is `correct_after - correct_before`, so an already-easy region does not
+receive credit unless inserting the candidate actually changes local top-1
+correctness.
+
 ## Test
 
 ```bash
