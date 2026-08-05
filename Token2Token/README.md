@@ -111,6 +111,61 @@ score is `correct_after - correct_before`, so an already-easy region does not
 receive credit unless inserting the candidate actually changes local top-1
 correctness.
 
+## Global 95% threshold-unlock experiment
+
+The current V2 experiment uses the entire 128-token completion canvas. For each
+round, frozen base LLaDA considers gold catalyst candidates whose current gold
+probability is at least half of the best candidate probability. After
+temporarily revealing a candidate, it finds every remaining position whose
+top-1 confidence is at least 95%. The selected catalyst maximizes the number of
+those predictions that are already correct, with fewer confident mistakes and
+higher catalyst probability used as tie-breakers.
+
+The saved unlock set includes both correct and incorrect predictions above the
+threshold. Training applies gold-token CE to all of them, because inference
+cannot use gold correctness to filter a confident mistake. The gold catalyst
+and corrected unlock set are then teacher-forced before the next round. If no
+position crosses the threshold, only the catalyst is placed, guaranteeing
+progress. Target generation writes a `.summary.json` containing threshold
+density, zero-unlock frequency, and implied tokens per forward.
+
+Generate a smoke target set first:
+
+```bash
+python3 -m Token2Token.precompute_threshold_unlock_targets \
+  --examples 5 \
+  --confidence-threshold 0.95 \
+  --candidate-batch-size 8 \
+  --output outputs/token2token/threshold_unlock/gsm8k_smoke_t095.jsonl
+```
+
+After inspecting `gsm8k_smoke_t095.summary.json`, generate all targets by using
+`--examples 7473 --resume`. Train the LoRA with threshold-trajectory CE plus an
+ordinary masked-denoising CE batch that preserves normal generation:
+
+```bash
+TARGETS_FILE=outputs/token2token/threshold_unlock/gsm8k_train_t095.jsonl \
+OUTPUT_DIR=outputs/token2token/threshold_unlock/llada8b_gsm8k_t095 \
+bash Token2Token/run_threshold_unlock.sh
+```
+
+Matching inference commits one highest-confidence catalyst, reruns the model,
+then commits all remaining positions above the same threshold. Evaluate the
+adapter and optionally sweep lower thresholds after measuring 95% density:
+
+```bash
+python3 -m Token2Token.eval_threshold_gsm8k \
+  --adapter-path outputs/token2token/threshold_unlock/llada8b_gsm8k_t095/adapter-final \
+  --model-label threshold_lora \
+  --thresholds 0.95,0.90 \
+  --resume \
+  --output-dir outputs/token2token/threshold_unlock/eval_threshold_lora
+```
+
+Report both GSM8K accuracy and `tokens_per_forward`. Each cycle uses one forward
+for its catalyst and one for its threshold unlock, except when the catalyst
+finishes the completion.
+
 ## Test
 
 ```bash

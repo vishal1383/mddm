@@ -15,19 +15,31 @@ from Token2Token.core import (
     select_targets,
 )
 from Token2Token.train import _token_ids, greedy_ig_targets
-from Token2Token.decode import confidence_decode
+from Token2Token.decode import confidence_decode, threshold_unlock_decode
 from Token2Token.eval_gsm8k import (
     batch_confidence_decode,
     extract_gsm8k_answer,
     parse_k_values,
 )
 from Token2Token.eval_lm1b_loss import parse_mask_ratios
+from Token2Token.eval_threshold_gsm8k import (
+    batch_threshold_unlock_decode,
+    parse_thresholds,
+    threshold_tag,
+)
 from Token2Token.precompute_local_unlock_targets import (
     greedy_local_unlock_targets,
     shifted_window,
 )
 from Token2Token.precompute_rollout_targets import greedy_rollout_targets
+from Token2Token.precompute_threshold_unlock_targets import (
+    candidate_key,
+    plausible_candidates,
+    threshold_unlock_trajectory,
+    threshold_positions,
+)
 from Token2Token.train_standard import masked_denoising_loss
+from Token2Token.train_threshold_unlock import trajectory_stages
 from Token2Token.summarize_gsm8k_sweep import build_rows, render_report
 from Token2Token.select_best_epoch import summarize_epochs
 from Token2Token.train_anchor_order import (
@@ -87,6 +99,17 @@ class ToyRolloutModel(torch.nn.Module):
                 logits[position + 1, predicted] = 10.0
             rows.append(logits)
         return SimpleNamespace(logits=torch.stack(rows))
+
+
+class ToyThresholdModel(torch.nn.Module):
+    def forward(self, input_ids, attention_mask=None, use_cache=False):
+        del attention_mask, use_cache
+        logits = torch.zeros(len(input_ids), input_ids.shape[1], 6)
+        strengths = [8.0, 6.0, 1.0]
+        for completion_position, strength in enumerate(strengths):
+            sequence_position = completion_position + 1
+            logits[:, sequence_position, completion_position + 1] = strength
+        return SimpleNamespace(logits=logits)
 
 
 class CoreTests(unittest.TestCase):
@@ -207,6 +230,115 @@ class CoreTests(unittest.TestCase):
         )
         self.assertEqual(len(trace), 2)
         self.assertEqual([len(item["filled"]) for item in trace], [2, 2])
+
+    def test_threshold_unlock_decode_uses_top1_then_threshold_burst(self):
+        canvas = [0, 0, 0]
+        trace = threshold_unlock_decode(
+            ToyThresholdModel(),
+            ToyTokenizer(),
+            [9],
+            canvas,
+            0,
+            confidence_threshold=0.95,
+            device="cpu",
+        )
+        self.assertEqual(canvas, [1, 2, 3])
+        self.assertEqual(
+            [(item["phase"], len(item["filled"])) for item in trace],
+            [("catalyst", 1), ("threshold_unlock", 1), ("catalyst", 1)],
+        )
+
+    def test_batched_threshold_unlock_decode(self):
+        canvases, stats = batch_threshold_unlock_decode(
+            ToyThresholdModel(),
+            [[9], [8]],
+            3,
+            0,
+            confidence_threshold=0.95,
+            device="cpu",
+            pad_token_id=5,
+        )
+        self.assertEqual(canvases, [[1, 2, 3], [1, 2, 3]])
+        self.assertTrue(all(item["threshold_tokens"] == 1 for item in stats))
+        self.assertEqual(parse_thresholds(".95,.9,.95"), [0.95, 0.9])
+        self.assertEqual(threshold_tag(0.95), "t0p95")
+
+    def test_threshold_set_includes_wrong_predictions_for_correction(self):
+        unlocked = threshold_positions(
+            [0, 0, 7, 0, 0],
+            [1, 2, 7, 4, 5],
+            [1, 9, 7, 4, 8],
+            [0.96, 0.99, 0.99, 0.951, 0.949],
+            candidate_position=0,
+            mask_token_id=0,
+            threshold=0.95,
+        )
+        self.assertEqual([item["gold_position"] for item in unlocked], [1, 3])
+        self.assertEqual([item["was_correct"] for item in unlocked], [False, True])
+
+    def test_threshold_target_trajectory_places_catalyst_then_burst(self):
+        rounds = threshold_unlock_trajectory(
+            ToyThresholdModel(),
+            ToyTokenizer(),
+            [9],
+            [1, 2, 3],
+            0,
+            confidence_threshold=0.95,
+            candidate_prob_ratio=0.5,
+            candidate_batch_size=2,
+            device="cpu",
+        )
+        self.assertEqual(len(rounds), 2)
+        self.assertEqual(rounds[0]["catalyst"]["gold_position"], 0)
+        self.assertEqual([item["gold_position"] for item in rounds[0]["unlocked"]], [1])
+        self.assertEqual(rounds[1]["catalyst"]["gold_position"], 2)
+
+    def test_threshold_candidate_is_plausible_and_prefers_safe_density(self):
+        log_probabilities = {0: -0.1, 1: -0.3, 2: -2.0}
+        self.assertEqual(
+            plausible_candidates([0, 1, 2], log_probabilities, 0.5), [0, 1]
+        )
+        safe = {
+            "position": 0,
+            "gold_log_probability": -0.3,
+            "unlocked": [{"was_correct": True}],
+        }
+        risky = {
+            "position": 1,
+            "gold_log_probability": -0.1,
+            "unlocked": [
+                {"was_correct": True},
+                {"was_correct": False},
+            ],
+        }
+        self.assertGreater(candidate_key(safe), candidate_key(risky))
+
+    def test_threshold_trajectory_stages_fill_each_token_once(self):
+        record = {
+            "gold_ids": [1, 2, 3, 4],
+            "rounds": [
+                {
+                    "round": 1,
+                    "catalyst": {"gold_position": 1, "token_id": 2},
+                    "unlocked": [
+                        {"gold_position": 3, "token_id": 4},
+                        {"gold_position": 0, "token_id": 1},
+                    ],
+                },
+                {
+                    "round": 2,
+                    "catalyst": {"gold_position": 2, "token_id": 3},
+                    "unlocked": [],
+                },
+            ],
+        }
+        stages = trajectory_stages(record, 0)
+        self.assertEqual(
+            [item["kind"] for item in stages], ["catalyst", "unlock", "catalyst"]
+        )
+        self.assertEqual(stages[0]["canvas"], [0, 0, 0, 0])
+        self.assertEqual(stages[1]["canvas"], [0, 2, 0, 0])
+        self.assertEqual(stages[2]["canvas"], [1, 2, 0, 4])
 
     def test_batched_top_k_confidence_decode(self):
         canvases = batch_confidence_decode(
@@ -334,18 +466,14 @@ class CoreTests(unittest.TestCase):
             )
             validate_target_provenance(path, [{"target_source": None}])
             metadata.write_text(
-                json.dumps(
-                    {"target_source": "frozen_base_confidence_rollout"}
-                ),
+                json.dumps({"target_source": "frozen_base_confidence_rollout"}),
                 encoding="utf-8",
             )
             validate_target_provenance(
                 path, [{"target_source": "frozen_base_confidence_rollout"}]
             )
             metadata.write_text(
-                json.dumps(
-                    {"target_source": "frozen_base_local_top1_unlock"}
-                ),
+                json.dumps({"target_source": "frozen_base_local_top1_unlock"}),
                 encoding="utf-8",
             )
             validate_target_provenance(
@@ -369,9 +497,7 @@ class CoreTests(unittest.TestCase):
         wrong[1, 4] = 5.0
         correct_loss, _, _ = anchor_loss(correct, targets, {}, priors)
         wrong_loss, _, _ = anchor_loss(wrong, targets, {}, priors)
-        self.assertLess(
-            float(correct_loss.grounding), float(wrong_loss.grounding)
-        )
+        self.assertLess(float(correct_loss.grounding), float(wrong_loss.grounding))
 
     def test_prior_peaks_between_neighbors_with_soft_order_tails(self):
         targets = [Target(0, 1, "a", 1), Target(1, 2, "b", 4), Target(2, 3, "c", 7)]

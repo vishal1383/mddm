@@ -28,16 +28,27 @@ def main() -> None:
         )
     )
     canvas = [mask_token_id] * args.completion_length
-    decode_trace = confidence_decode(
-        model,
-        tokenizer,
-        prompt_ids,
-        canvas,
-        mask_token_id,
-        steps=args.decode_steps,
-        tokens_per_step=args.tokens_per_step,
-        device=device,
-    )
+    if args.confidence_threshold is not None:
+        decode_trace = threshold_unlock_decode(
+            model,
+            tokenizer,
+            prompt_ids,
+            canvas,
+            mask_token_id,
+            confidence_threshold=args.confidence_threshold,
+            device=device,
+        )
+    else:
+        decode_trace = confidence_decode(
+            model,
+            tokenizer,
+            prompt_ids,
+            canvas,
+            mask_token_id,
+            steps=args.decode_steps,
+            tokens_per_step=args.tokens_per_step,
+            device=device,
+        )
     result = {
         "prompt": args.prompt,
         "decode_trace": decode_trace,
@@ -109,6 +120,110 @@ def confidence_decode(
     return trace
 
 
+def threshold_unlock_decode(
+    model,
+    tokenizer,
+    prompt_ids,
+    canvas,
+    mask_token_id,
+    *,
+    confidence_threshold,
+    device,
+):
+    if not 0 < confidence_threshold < 1:
+        raise ValueError("confidence_threshold must be in (0, 1)")
+    trace = []
+    cycle = 0
+    forward_pass = 0
+    with torch.no_grad():
+        while mask_token_id in canvas:
+            cycle += 1
+            confidence, token_ids = canvas_predictions(
+                model, prompt_ids, canvas, mask_token_id, device
+            )
+            forward_pass += 1
+            masked = [
+                position
+                for position, token_id in enumerate(canvas)
+                if token_id == mask_token_id
+            ]
+            catalyst_position = max(
+                masked, key=lambda position: float(confidence[position])
+            )
+            catalyst = fill_positions(
+                tokenizer,
+                canvas,
+                [catalyst_position],
+                token_ids,
+                confidence,
+            )
+            trace.append(
+                {
+                    "cycle": cycle,
+                    "forward": forward_pass,
+                    "phase": "catalyst",
+                    "filled": catalyst,
+                }
+            )
+            if mask_token_id not in canvas:
+                break
+
+            confidence, token_ids = canvas_predictions(
+                model, prompt_ids, canvas, mask_token_id, device
+            )
+            forward_pass += 1
+            unlocked_positions = sorted(
+                (
+                    position
+                    for position, token_id in enumerate(canvas)
+                    if token_id == mask_token_id
+                    and float(confidence[position]) >= confidence_threshold
+                ),
+                key=lambda position: float(confidence[position]),
+                reverse=True,
+            )
+            unlocked = fill_positions(
+                tokenizer,
+                canvas,
+                unlocked_positions,
+                token_ids,
+                confidence,
+            )
+            trace.append(
+                {
+                    "cycle": cycle,
+                    "forward": forward_pass,
+                    "phase": "threshold_unlock",
+                    "threshold": confidence_threshold,
+                    "filled": unlocked,
+                }
+            )
+    return trace
+
+
+def canvas_predictions(model, prompt_ids, canvas, mask_token_id, device):
+    logits = completion_logits(model, prompt_ids, canvas, device).float()
+    logits[:, mask_token_id] = -torch.inf
+    probabilities = torch.softmax(logits, dim=-1)
+    return probabilities.max(dim=-1)
+
+
+def fill_positions(tokenizer, canvas, positions, token_ids, confidence):
+    filled = []
+    for position in positions:
+        token_id = int(token_ids[position])
+        canvas[position] = token_id
+        filled.append(
+            {
+                "position": position,
+                "token_id": token_id,
+                "token": tokenizer.decode([token_id]),
+                "confidence": float(confidence[position]),
+            }
+        )
+    return filled
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Standard confidence decode for an IG-anchor-trained adapter"
@@ -119,6 +234,7 @@ def parse_args():
     parser.add_argument("--completion-length", type=int, default=128)
     parser.add_argument("--decode-steps", type=int, default=32)
     parser.add_argument("--tokens-per-step", type=int)
+    parser.add_argument("--confidence-threshold", type=float)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--output")
     return parser.parse_args()
