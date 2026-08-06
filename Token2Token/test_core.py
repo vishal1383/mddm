@@ -43,6 +43,11 @@ from Token2Token.train_standard import masked_denoising_loss
 from Token2Token.train_threshold_unlock import trajectory_stages
 from Token2Token.summarize_gsm8k_sweep import build_rows, render_report
 from Token2Token.select_best_epoch import summarize_epochs
+from Token2Token.summarize_threshold_comparison import (
+    add_latency_metrics,
+    comparison,
+    render_markdown as render_threshold_comparison,
+)
 from Token2Token.train_anchor_order import (
     anchor_target_loss,
     anchor_completion_losses,
@@ -449,6 +454,36 @@ class CoreTests(unittest.TestCase):
             [item["positions"] for item in stages],
             [[0], [1], [2]],
         )
+
+    def test_threshold_comparison_reports_accuracy_and_latency(self):
+        baseline = add_latency_metrics(
+            {
+                "model_label": "base",
+                "confidence_threshold": 0.95,
+                "examples": 100,
+                "correct": 50,
+                "accuracy": 0.5,
+                "elapsed_seconds": 200.0,
+                "total_model_forwards": 1000,
+                "tokens_per_forward": 12.8,
+            }
+        )
+        trained = add_latency_metrics(
+            {
+                "model_label": "trained",
+                "confidence_threshold": 0.95,
+                "examples": 100,
+                "correct": 60,
+                "accuracy": 0.6,
+                "elapsed_seconds": 100.0,
+                "total_model_forwards": 800,
+                "tokens_per_forward": 16.0,
+            }
+        )
+        result = comparison(baseline, trained)
+        self.assertAlmostEqual(result["accuracy_change_pp"], 10.0)
+        self.assertAlmostEqual(result["trained_speedup_vs_baseline"], 2.0)
+        self.assertIn("+10.00 percentage points", render_threshold_comparison(result))
 
     def test_batched_top_k_confidence_decode(self):
         canvases = batch_confidence_decode(

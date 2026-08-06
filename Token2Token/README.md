@@ -179,6 +179,16 @@ Report both GSM8K accuracy and `tokens_per_forward`. Each cycle uses one forward
 for its catalyst and one for its threshold unlock, except when the catalyst
 finishes the completion.
 
+To evaluate the full GSM8K test set with identical settings for base LLaDA and
+the trained adapter, then write an accuracy and wall-latency comparison:
+
+```bash
+bash Token2Token/run_threshold_eval_compare.sh
+```
+
+The comparison is saved as `comparison.json` and `comparison.md` under the
+evaluation output directory.
+
 ## Test
 
 ```bash
