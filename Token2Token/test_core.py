@@ -408,6 +408,18 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(stages[0]["canvas"], [0, 0, 0, 0])
         self.assertEqual(stages[1]["canvas"], [1, 2, 0, 4])
 
+    def test_threshold_trajectory_stages_allow_residual_only_record(self):
+        record = {
+            "gold_ids": [1, 2, 3],
+            "rounds": [],
+            "residual": [
+                {"gold_position": 0, "token_id": 1},
+                {"gold_position": 1, "token_id": 2},
+                {"gold_position": 2, "token_id": 3},
+            ],
+        }
+        self.assertEqual(trajectory_stages(record, 0), [])
+
     def test_batched_top_k_confidence_decode(self):
         canvases = batch_confidence_decode(
             ToyDecodeModel(),
