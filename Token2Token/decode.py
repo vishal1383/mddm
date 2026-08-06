@@ -154,9 +154,7 @@ def threshold_unlock_decode(
                 if is_allowed_anchor_token(int(token_ids[position]), tokenizer)
             ]
             if not allowed:
-                cleanup_position = max(
-                    masked, key=lambda position: float(confidence[position])
-                )
+                cleanup_position = min(masked)
                 cleanup = fill_positions(
                     tokenizer,
                     canvas,

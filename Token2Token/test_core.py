@@ -286,6 +286,24 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(stats[0]["cleanup_tokens"], 3)
         self.assertEqual(stats[0]["threshold_tokens"], 0)
 
+    def test_threshold_decode_cleanup_is_left_to_right(self):
+        canvas = [0, 0, 0]
+        trace = threshold_unlock_decode(
+            ToyDecodeModel(),
+            ToyTokenizer(),
+            [9],
+            canvas,
+            0,
+            confidence_threshold=0.95,
+            device="cpu",
+        )
+        cleanup_positions = [
+            item["filled"][0]["position"]
+            for item in trace
+            if item["phase"] == "cleanup"
+        ]
+        self.assertEqual(cleanup_positions, [0, 1, 2])
+
     def test_threshold_set_keeps_only_correct_high_confidence_predictions(self):
         unlocked = correct_threshold_positions(
             [0, 0, 7, 0, 0],
@@ -408,7 +426,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(stages[0]["canvas"], [0, 0, 0, 0])
         self.assertEqual(stages[1]["canvas"], [1, 2, 0, 4])
 
-    def test_threshold_trajectory_stages_allow_residual_only_record(self):
+    def test_threshold_trajectory_stages_use_ltr_for_residual_only_record(self):
         record = {
             "gold_ids": [1, 2, 3],
             "rounds": [],
@@ -418,7 +436,19 @@ class CoreTests(unittest.TestCase):
                 {"gold_position": 2, "token_id": 3},
             ],
         }
-        self.assertEqual(trajectory_stages(record, 0), [])
+        stages = trajectory_stages(record, 0)
+        self.assertEqual(
+            [item["kind"] for item in stages],
+            ["left_to_right_cleanup"] * 3,
+        )
+        self.assertEqual(
+            [item["canvas"] for item in stages],
+            [[0, 0, 0], [1, 0, 0], [1, 2, 0]],
+        )
+        self.assertEqual(
+            [item["positions"] for item in stages],
+            [[0], [1], [2]],
+        )
 
     def test_batched_top_k_confidence_decode(self):
         canvases = batch_confidence_decode(

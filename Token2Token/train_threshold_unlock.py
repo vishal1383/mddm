@@ -43,24 +43,6 @@ def main() -> None:
         prompt_ids = list(map(int, record["prompt_ids"]))
         gold_ids = list(map(int, record["gold_ids"]))
         stages = trajectory_stages(record, mask_token_id)
-        if not stages and not args.standard_loss_weight:
-            step += 1
-            global_step = args.step_offset + step
-            row = {
-                "step": global_step,
-                "dataset": record["dataset"],
-                "example_id": record["example_id"],
-                "skipped_no_anchor": True,
-                "loss": None,
-                "catalyst_loss": None,
-                "standard_loss": 0.0,
-                "sampled_stages": 0,
-                "elapsed_seconds": time.time() - started,
-            }
-            with log_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(row, ensure_ascii=True) + "\n")
-            print(f"step={global_step} skipped_no_anchor example={record['example_id']}")
-            continue
         sampled = sample_stages(stages, args.stages_per_example, random)
         model_stages = list(sampled)
         standard_stage = None
@@ -160,10 +142,22 @@ def trajectory_stages(record, mask_token_id):
             validate_gold_target(canvas, gold_ids, position, token_id, mask_token_id)
             canvas[position] = token_id
 
-    for target in record.get("residual", []):
+    residual = sorted(
+        record.get("residual", []), key=lambda item: int(item["gold_position"])
+    )
+    for cleanup_index, target in enumerate(residual, start=1):
         position = int(target["gold_position"])
         token_id = int(target["token_id"])
         validate_gold_target(canvas, gold_ids, position, token_id, mask_token_id)
+        stages.append(
+            {
+                "kind": "left_to_right_cleanup",
+                "round": len(record["rounds"]) + cleanup_index,
+                "canvas": list(canvas),
+                "positions": [position],
+                "token_ids": [token_id],
+            }
+        )
         canvas[position] = token_id
 
     if canvas != gold_ids:

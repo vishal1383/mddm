@@ -162,8 +162,9 @@ then commits all remaining positions above the same threshold. Evaluate the
 adapter and optionally sweep lower thresholds after measuring 95% density:
 
 Only alphabetic predictions are eligible for the catalyst step. When no such
-prediction remains, inference commits one highest-confidence residual token as
-cleanup without treating it as an anchor.
+prediction remains, inference commits the leftmost residual token as
+left-to-right cleanup without treating it as an anchor. Training uses the same
+single-token left-to-right cleanup stages for positions left in `residual`.
 
 ```bash
 python3 -m Token2Token.eval_threshold_gsm8k \

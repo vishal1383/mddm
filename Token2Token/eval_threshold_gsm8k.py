@@ -198,9 +198,12 @@ def batch_threshold_unlock_decode(
             )
             has_anchor = allowed.any(dim=1) & active
             cleanup = active & ~has_anchor
-            selectable = torch.where(has_anchor.unsqueeze(1), allowed, masked)
-            catalyst_positions = confidence.masked_fill(~selectable, -torch.inf).argmax(
+            catalyst_positions = confidence.masked_fill(~allowed, -torch.inf).argmax(
                 dim=1
+            )
+            leftmost_positions = masked.long().argmax(dim=1)
+            catalyst_positions = torch.where(
+                has_anchor, catalyst_positions, leftmost_positions
             )
             active_rows = torch.where(active)[0]
             active_positions = catalyst_positions[active]
