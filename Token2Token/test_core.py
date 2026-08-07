@@ -343,6 +343,21 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(canvases, [[1, 2, 3]])
         self.assertEqual(stats[0]["cycles"], stats[0]["model_forwards"])
 
+    def test_multiple_catalysts_commit_in_one_forward(self):
+        canvases, stats = batch_threshold_unlock_decode(
+            ToyThresholdModel(),
+            [[9]],
+            3,
+            0,
+            confidence_threshold=0.999,
+            catalyst_tokens_per_forward=2,
+            tokenizer=ToyTextTokenizer(),
+            device="cpu",
+            pad_token_id=5,
+        )
+        self.assertEqual(canvases, [[1, 2, 3]])
+        self.assertEqual(stats[0]["catalyst_tokens"], 3)
+
     def test_single_forward_mode_requires_first_forward_commits(self):
         with self.assertRaises(ValueError):
             batch_threshold_unlock_decode(

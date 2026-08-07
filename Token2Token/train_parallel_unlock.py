@@ -151,7 +151,8 @@ def sample_canvases(record, gold_ids, mask_token_id, args, rng):
     transitions = anchor_transitions(record, mask_token_id, args.max_unlock_tokens)
     pool = []
     for item in transitions:
-        pool.append(item["anchor"]["canvas"])
+        if args.canvas_source != "post-anchor":
+            pool.append(item["anchor"]["canvas"])
         if item["post_anchor"] is not None:
             pool.append(item["post_anchor"]["canvas"])
     count = min(args.canvases_per_example, len(pool))
@@ -296,6 +297,9 @@ def parse_args():
     parser.add_argument("--record-limit", type=int, default=7_473)
     parser.add_argument("--max-steps", type=int, default=7_473)
     parser.add_argument("--canvases-per-example", type=int, default=4)
+    parser.add_argument(
+        "--canvas-source", choices=("trajectory", "post-anchor"), default="trajectory"
+    )
     parser.add_argument("--max-unlock-tokens", type=int, default=2)
     parser.add_argument("--commit-threshold", type=float, default=0.95)
     parser.add_argument("--promote-min-confidence", type=float, default=0.5)

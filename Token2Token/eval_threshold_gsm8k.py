@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import json
 from pathlib import Path
 import time
@@ -93,6 +94,8 @@ def main() -> None:
                         args.commit_threshold_on_first_forward
                     ),
                     unlock_forward=args.unlock_forward,
+                    catalyst_tokens_per_forward=args.catalyst_tokens_per_forward,
+                    base_first_forward=(args.adapter_scope == "unlock"),
                     tokenizer=tokenizer,
                     device=device,
                     pad_token_id=pad_token_id,
@@ -152,6 +155,8 @@ def main() -> None:
                 args.commit_threshold_on_first_forward
             ),
             "unlock_forward": args.unlock_forward,
+            "catalyst_tokens_per_forward": args.catalyst_tokens_per_forward,
+            "adapter_scope": args.adapter_scope,
             "elapsed_seconds": time.time() - started,
         }
         summaries = [
@@ -177,6 +182,8 @@ def batch_threshold_unlock_decode(
     max_threshold_tokens=None,
     commit_threshold_on_first_forward=False,
     unlock_forward=True,
+    catalyst_tokens_per_forward=1,
+    base_first_forward=False,
     tokenizer,
     device,
     pad_token_id,
@@ -187,6 +194,8 @@ def batch_threshold_unlock_decode(
         raise ValueError(
             "disabling the unlock forward requires first-forward threshold commits"
         )
+    if catalyst_tokens_per_forward <= 0:
+        raise ValueError("catalyst_tokens_per_forward must be positive")
     prompts, prompt_attention = pad_prompts(prompt_ids_batch, pad_token_id, device)
     canvases = torch.full(
         (len(prompt_ids_batch), completion_length),
@@ -207,14 +216,15 @@ def batch_threshold_unlock_decode(
         while bool(canvases.eq(mask_token_id).any()):
             masked = canvases.eq(mask_token_id)
             active = masked.any(dim=1)
-            confidence, token_ids = batch_canvas_predictions(
-                model,
-                prompts,
-                prompt_attention,
-                canvases,
-                completion_attention,
-                mask_token_id,
-            )
+            with adapter_disabled(model, base_first_forward):
+                confidence, token_ids = batch_canvas_predictions(
+                    model,
+                    prompts,
+                    prompt_attention,
+                    canvases,
+                    completion_attention,
+                    mask_token_id,
+                )
             forwards[active] += 1
             cycles[active] += 1
             allowed = allowed_prediction_mask(
@@ -222,19 +232,16 @@ def batch_threshold_unlock_decode(
             )
             has_anchor = allowed.any(dim=1) & active
             cleanup = active & ~has_anchor
-            catalyst_positions = confidence.masked_fill(~allowed, -torch.inf).argmax(
-                dim=1
-            )
-            leftmost_positions = masked.long().argmax(dim=1)
-            catalyst_positions = torch.where(
-                has_anchor, catalyst_positions, leftmost_positions
-            )
-            active_rows = torch.where(active)[0]
-            active_positions = catalyst_positions[active]
-            canvases[active_rows, active_positions] = token_ids[
-                active_rows, active_positions
-            ]
-            catalyst_tokens[has_anchor] += 1
+            scores = confidence.masked_fill(~allowed, -torch.inf)
+            budget = min(int(catalyst_tokens_per_forward), scores.shape[1])
+            chosen = torch.zeros_like(allowed)
+            chosen.scatter_(1, scores.topk(budget, dim=1).indices, True)
+            chosen &= allowed & has_anchor.unsqueeze(1)
+            leftmost = torch.zeros_like(allowed)
+            leftmost.scatter_(1, masked.long().argmax(dim=1, keepdim=True), True)
+            chosen |= leftmost & cleanup.unsqueeze(1)
+            canvases[chosen] = token_ids[chosen]
+            catalyst_tokens += (chosen & has_anchor.unsqueeze(1)).sum(dim=1)
             cleanup_tokens[cleanup] += 1
 
             if commit_threshold_on_first_forward:
@@ -366,6 +373,14 @@ def pad_prompts(prompt_ids_batch, pad_token_id, device):
     )
 
 
+def adapter_disabled(model, enabled):
+    """Run the catalyst forward on the frozen base so the adapter can only
+    affect the post-anchor unlock forward."""
+    if enabled and hasattr(model, "disable_adapter"):
+        return model.disable_adapter()
+    return nullcontext()
+
+
 def limit_threshold_selection(selected, confidence, max_threshold_tokens):
     if max_threshold_tokens is None:
         return selected
@@ -462,6 +477,10 @@ def parse_args():
     parser.add_argument(
         "--unlock-forward", action=argparse.BooleanOptionalAction, default=True
     )
+    parser.add_argument("--catalyst-tokens-per-forward", type=int, default=1)
+    parser.add_argument(
+        "--adapter-scope", choices=("all", "unlock"), default="all"
+    )
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--resume", action="store_true")
@@ -474,6 +493,8 @@ def parse_args():
         parser.error("max-threshold-tokens must be positive")
     if args.tokens_per_step <= 0:
         parser.error("tokens-per-step must be positive")
+    if args.catalyst_tokens_per_forward <= 0:
+        parser.error("catalyst-tokens-per-forward must be positive")
     if not args.unlock_forward and not args.commit_threshold_on_first_forward:
         parser.error(
             "--no-unlock-forward requires --commit-threshold-on-first-forward"
