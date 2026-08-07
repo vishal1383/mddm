@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import random
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -58,6 +59,15 @@ from Token2Token.train_parallel_unlock import (
     gold_cross_entropy,
     preserve_kl,
     promote_objective,
+)
+from Token2Token.precompute_teacher_rollouts import (
+    TARGET_SOURCE as TEACHER_ROLLOUT_SOURCE,
+    teacher_rollout_actions,
+    validate_rollout_record,
+)
+from Token2Token.train_lookahead_distillation import (
+    future_token_loss,
+    sample_rollout_stages,
 )
 from Token2Token.train_threshold_unlock import trajectory_stages
 from Token2Token.summarize_gsm8k_sweep import build_rows, render_report
@@ -143,6 +153,51 @@ class ToyThresholdModel(torch.nn.Module):
 
 
 class CoreTests(unittest.TestCase):
+    def test_teacher_rollout_uses_block_k1_schedule(self):
+        canvases, actions = teacher_rollout_actions(
+            ToyThresholdModel(),
+            [[9]],
+            completion_length=3,
+            block_length=2,
+            mask_token_id=0,
+            device="cpu",
+            pad_token_id=5,
+        )
+        self.assertEqual(canvases, [[1, 2, 3]])
+        self.assertEqual(
+            [(item["position"], item["token_id"]) for item in actions[0]],
+            [(0, 1), (1, 2), (2, 3)],
+        )
+
+    def test_lookahead_stages_do_not_cross_block_boundaries(self):
+        record = {
+            "target_source": TEACHER_ROLLOUT_SOURCE,
+            "completion_length": 4,
+            "block_length": 2,
+            "actions": [
+                {"step": index, "position": index, "token_id": index + 1}
+                for index in range(4)
+            ],
+        }
+        validate_rollout_record(record)
+        stages = sample_rollout_stages(record, 0, 2, 10, random.Random(0))
+        self.assertEqual([stage["start"] for stage in stages], [0, 2])
+        self.assertEqual(stages[0]["canvas"], [0, 0, 0, 0])
+        self.assertEqual(stages[1]["canvas"], [1, 2, 0, 0])
+
+    def test_lookahead_loss_supervises_only_post_anchor_tokens(self):
+        logits = torch.zeros(1, 3, 5)
+        logits[0, 1, 2] = 10.0
+        stage = {
+            "canvas": [0, 0, 0],
+            "targets": [
+                {"position": 0, "token_id": 1},
+                {"position": 1, "token_id": 2},
+            ],
+        }
+        loss = future_token_loss(logits, [stage], mask_token_id=0)
+        self.assertLess(float(loss), 0.001)
+
     def test_target_selection_excludes_far_right_tail(self):
         targets = select_targets(
             list(range(20)),
