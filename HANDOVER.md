@@ -562,6 +562,14 @@ were queued before this was written:
 - `single_forward_noforce` skips the forced commit whenever the threshold
   already selected something. It should **gain** accuracy, at some cost in
   forwards.
+- `single_forward_any` drops the alphabetic restriction, so the forced token
+  becomes the globally most confident masked position instead of the most
+  confident *alphabetic* one. The alphabetic filter is what makes the forced
+  commit risky: the best alphabetic candidate can sit far below the global
+  best, while the global argmax is usually already above the threshold and
+  would have been committed anyway. So `any` should behave much like
+  `noforce` -- **more accurate, more forwards** -- and if it does, the
+  text-anchor rule is not merely inert, it is actively costing accuracy.
 - Threshold 0.90 should **not** simply lose accuracy relative to 0.95, because
   it shifts work from forced commits to threshold commits.
 
