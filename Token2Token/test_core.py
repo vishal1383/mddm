@@ -604,6 +604,22 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(buckets["repair"], [2])
         self.assertEqual(buckets["preserve"], [0, 3])
 
+    def test_numeric_positions_are_pinned_to_the_base_distribution(self):
+        class DigitTokenizer:
+            def decode(self, token_ids):
+                return {1: " 67", 2: " dollars"}[token_ids[0]]
+
+        teacher = torch.zeros(2, 6)
+        teacher[0, 1] = 1.8
+        teacher[1, 2] = 1.8
+        unprotected = bucket_positions(teacher, [0, 0], [1, 2], 0, 0.95, 0.5)
+        self.assertEqual(unprotected["promote"], [0, 1])
+        protected = bucket_positions(
+            teacher, [0, 0], [1, 2], 0, 0.95, 0.5, 0, DigitTokenizer(), {}
+        )
+        self.assertEqual(protected["promote"], [1])
+        self.assertEqual(protected["preserve"], [0])
+
     def test_repair_skips_positions_where_gold_is_not_a_live_alternative(self):
         teacher = torch.zeros(1, 6)
         teacher[0, 5] = 8.0

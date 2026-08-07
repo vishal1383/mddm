@@ -56,6 +56,7 @@ def main() -> None:
     trainable = [parameter for parameter in model.parameters() if parameter.requires_grad]
     optimizer = torch.optim.AdamW(trainable, lr=args.learning_rate)
     log_path = output / "train.jsonl"
+    numeric_cache = {}
     started = time.time()
 
     for step in range(1, args.max_steps + 1):
@@ -84,6 +85,8 @@ def main() -> None:
                 args.commit_threshold,
                 args.promote_min_confidence,
                 args.repair_max_gold_rank,
+                tokenizer if args.protect_numeric_positions else None,
+                numeric_cache,
             )
             for row_logits, canvas in zip(teacher_logits, canvases)
         ]
@@ -175,6 +178,8 @@ def bucket_positions(
     commit_threshold,
     promote_min_confidence,
     repair_max_gold_rank=0,
+    tokenizer=None,
+    numeric_cache=None,
 ):
     masked = [
         position
@@ -203,12 +208,39 @@ def bucket_positions(
         # it to abandon its own coherent completion.
         gold_rank = rows.gt(rows.gather(1, gold.unsqueeze(1))).sum(dim=1)
         repair = repair & gold_rank.lt(repair_max_gold_rank)
+    if tokenizer is not None:
+        # V3 kept base's prose almost verbatim but slipped digits: it turned
+        # "3 * $22.50 = $67.5" into "= $67". Numeric tokens carry the answer
+        # and have no redundancy, so pin them to the base distribution instead
+        # of letting the adapter move them.
+        protected = numeric_tokens(
+            top1.tolist() + gold.tolist(), tokenizer, numeric_cache
+        )
+        guard = torch.tensor(
+            protected, device=teacher_logits.device, dtype=torch.bool
+        ).view(2, -1).any(dim=0)
+        promote = promote & ~guard
+        repair = repair & ~guard
     preserve = ~(promote | repair)
     return {
         "promote": select(masked, promote),
         "repair": select(masked, repair),
         "preserve": select(masked, preserve),
     }
+
+
+def numeric_tokens(token_ids, tokenizer, cache):
+    if cache is None:
+        cache = {}
+    flags = []
+    for token_id in token_ids:
+        token_id = int(token_id)
+        if token_id not in cache:
+            cache[token_id] = any(
+                character.isdigit() for character in tokenizer.decode([token_id])
+            )
+        flags.append(cache[token_id])
+    return flags
 
 
 def select(positions, mask):
@@ -308,6 +340,11 @@ def parse_args():
     parser.add_argument("--promote-loss-weight", type=float, default=1.0)
     parser.add_argument("--repair-loss-weight", type=float, default=0.0)
     parser.add_argument("--repair-max-gold-rank", type=int, default=5)
+    parser.add_argument(
+        "--protect-numeric-positions",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     parser.add_argument("--preserve-kl-weight", type=float, default=1.0)
     parser.add_argument(
         "--random-denoising-canvas",
