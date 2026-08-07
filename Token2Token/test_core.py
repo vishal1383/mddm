@@ -827,17 +827,17 @@ class CoreTests(unittest.TestCase):
         committable[0, 0, 1] = 12.0
         zero = committable.sum() * 0.0
         self.assertEqual(
-            float(promote_objective(committable, [[0]], [1, 2], zero, "hinge", 0.97)),
+            float(promote_objective(committable, [[0]], [1, 2], zero, "hinge", 0.97, 0)),
             0.0,
         )
         self.assertGreater(
-            float(promote_objective(committable, [[0]], [1, 2], zero, "ce", 0.97)),
+            float(promote_objective(committable, [[0]], [1, 2], zero, "ce", 0.97, 0)),
             0.0,
         )
         undecided = torch.zeros(1, 2, 6)
         undecided[0, 0, 1] = 1.8
         self.assertGreater(
-            float(promote_objective(undecided, [[0]], [1, 2], zero, "hinge", 0.97)),
+            float(promote_objective(undecided, [[0]], [1, 2], zero, "hinge", 0.97, 0)),
             0.0,
         )
 
@@ -845,10 +845,10 @@ class CoreTests(unittest.TestCase):
         logits = torch.zeros(1, 2, 6)
         logits[0, 0, 1] = 12.0
         logits[0, 1, 2] = 1.0
-        self.assertEqual(promoted_fraction(logits, [[0]], [1, 2], 0.95), 1.0)
-        self.assertEqual(promoted_fraction(logits, [[1]], [1, 2], 0.95), 0.0)
-        self.assertEqual(promoted_fraction(logits, [[0, 1]], [1, 2], 0.95), 0.5)
-        self.assertEqual(promoted_fraction(logits, [[]], [1, 2], 0.95), 0.0)
+        self.assertEqual(promoted_fraction(logits, [[0]], [1, 2], 0.95, 0), 1.0)
+        self.assertEqual(promoted_fraction(logits, [[1]], [1, 2], 0.95, 0), 0.0)
+        self.assertEqual(promoted_fraction(logits, [[0, 1]], [1, 2], 0.95, 0), 0.5)
+        self.assertEqual(promoted_fraction(logits, [[]], [1, 2], 0.95, 0), 0.0)
 
     def test_masked_kl_preserves_base_distribution(self):
         teacher = torch.zeros(3, 5)

@@ -102,6 +102,7 @@ def main() -> None:
                 zero,
                 args.promote_loss,
                 args.promote_target_confidence,
+                mask_token_id,
             )
             repair_loss = gold_cross_entropy(
                 logits, [item["repair"] for item in buckets], gold_ids, zero
@@ -138,6 +139,7 @@ def main() -> None:
                 [item["promote"] for item in buckets],
                 gold_ids,
                 args.commit_threshold,
+                mask_token_id,
             ),
             "elapsed_seconds": time.time() - started,
         }
@@ -255,13 +257,19 @@ def select(positions, mask):
     return [position for position, flag in zip(positions, keep) if flag]
 
 
-def promote_objective(logits, rows, gold_ids, zero, objective, target_confidence):
+def promote_objective(
+    logits, rows, gold_ids, zero, objective, target_confidence, mask_token_id
+):
     """Raise gold probability only until the position becomes committable.
 
     Cross-entropy keeps pushing toward probability 1 long after a position has
     crossed the commit threshold, which buys no extra tokens per forward and
     is how earlier runs inflated confidence into wrong commits. The hinge stops
     contributing as soon as the position would commit.
+
+    The mask token is excluded from the denominator because the decoder
+    excludes it before softmax, so including it here would optimise a
+    slightly different quantity than the one that gates a commit.
     """
     if objective == "ce":
         return gold_cross_entropy(logits, rows, gold_ids, zero)
@@ -274,8 +282,10 @@ def promote_objective(logits, rows, gold_ids, zero, objective, target_confidence
         if not positions:
             continue
         index = torch.tensor(positions, device=logits.device, dtype=torch.long)
+        selected = row_logits[index].float().clone()
+        selected[:, int(mask_token_id)] = -torch.inf
         gold_log_probability = (
-            F.log_softmax(row_logits[index].float(), dim=-1)
+            F.log_softmax(selected, dim=-1)
             .gather(1, labels[index].unsqueeze(1))
             .squeeze(1)
         )
@@ -285,7 +295,7 @@ def promote_objective(logits, rows, gold_ids, zero, objective, target_confidence
     return torch.cat(losses).mean()
 
 
-def promoted_fraction(logits, rows, gold_ids, commit_threshold):
+def promoted_fraction(logits, rows, gold_ids, commit_threshold, mask_token_id):
     """Share of promote positions the student would now actually commit.
 
     The hinge loss is a proxy; this is the quantity that changes decoding.
@@ -301,7 +311,9 @@ def promoted_fraction(logits, rows, gold_ids, commit_threshold):
             if not positions:
                 continue
             index = torch.tensor(positions, device=logits.device, dtype=torch.long)
-            probabilities = torch.softmax(row_logits[index].float(), dim=-1)
+            selected = row_logits[index].float().clone()
+            selected[:, int(mask_token_id)] = -torch.inf
+            probabilities = torch.softmax(selected, dim=-1)
             gold = probabilities.gather(1, labels[index].unsqueeze(1)).squeeze(1)
             total += len(positions)
             crossed += int(gold.ge(commit_threshold).sum())
