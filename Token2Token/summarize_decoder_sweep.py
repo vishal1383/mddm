@@ -64,6 +64,13 @@ def render_markdown(rows):
         " Seconds/example | Pareto |",
         "|---|---:|---:|---:|---:|---:|:--:|",
     ]
+    lines.insert(
+        2,
+        "Rank by forwards/example. Seconds/example is wall clock on a shared"
+        " GPU: an arm that ran alongside a training job looks slower than one"
+        " that had the device to itself, regardless of how many forwards it"
+        " used. Only compare seconds between arms known to have run alone.\n",
+    )
     for row in rows:
         examples = int(row["examples"]) or 1
         forwards = int(row["total_model_forwards"]) / examples
