@@ -46,5 +46,10 @@ run single_forward_any --thresholds 0.95 $SINGLE --catalyst-filter any
 run single_forward_cat2 --thresholds 0.95 $SINGLE \
   --catalyst-tokens-per-forward 2
 
+# Latency-matched control. single_forward spends 41.4 forwards/example; plain
+# top-k with k=3 spends 128/3 = 42.7. If top-k matches its accuracy at the
+# same budget, the threshold rule is not what is buying the speedup.
+run topk_k3 --decoder topk --tokens-per-step 3 --thresholds 0.95
+
 echo "== round 2 complete =="
 python3 -m Token2Token.summarize_decoder_sweep --sweep-dir "$ROOT"
