@@ -587,6 +587,36 @@ This also revises section 8b's reading. The threshold burst places 75% of the
 tokens, but it only does so *because* a well-chosen anchor is placed each
 cycle. The burst is the anchor's effect, not an independent mechanism.
 
+#### Full anchor ablation
+
+Four decoders, identical apart from how they choose the token they force each
+forward. Base LLaDA, same 50 examples, threshold 0.95, one forward per cycle.
+
+| Configuration | Accuracy | Forwards/example | Anchors/forward | Unlocked/forward | Tokens/forward |
+|---|---:|---:|---:|---:|---:|
+| Uninformative anchor (`--catalyst-filter any`) | 29/50 = 58% | 69.2 | 1.000 | 0.850 | 1.850 |
+| Anchor only when the burst is empty (`--force-catalyst when-empty`) | 34/50 = 68% | 52.0 | 0.492 | 1.971 | 2.462 |
+| **One content anchor** | **36/50 = 72%** | **41.4** | **1.000** | **2.089** | **3.089** |
+| Two content anchors | 32/50 = 64% | 27.7 | 1.823 | 2.801 | 4.624 |
+
+Three separate things are being varied and each matters:
+
+1. **Anchor quality.** Informative versus uninformative, holding count at 1.000:
+   unlocked/forward 2.089 versus 0.850, accuracy 72% versus 58%. This is the
+   largest single effect in the whole investigation.
+2. **Anchor presence.** Placing an anchor every forward versus only when the
+   burst is empty: 3.089 versus 2.462 tokens/forward, 72% versus 68%. Note the
+   burst barely changes (2.089 versus 1.971), so most of the throughput loss is
+   simply the missing forced token, while the 4-point accuracy loss says the
+   anchor commits are *good* commits, not merely extra ones.
+3. **Anchor count.** More anchors buy throughput and cost accuracy, sub-linearly.
+
+One nuance worth not overstating: `noforce` still reaches 1.971 unlocked per
+forward while placing anchors only half as often. So the burst is not driven
+purely by the anchor placed in that same forward; accumulated context carries
+much of it. The anchor's marginal contribution is real but smaller than the
+gap between informative and uninformative anchors implies.
+
 #### Anchors have diminishing but real marginal returns
 
 Forcing two content words per forward instead of one
@@ -667,6 +697,17 @@ were queued before this was written:
   The same inversion predicts `noforce` will be **worse**, not better: skipping
   the forced commit skips the anchor. That prediction is recorded here before
   that arm finished.
+
+  **Result: the revised prediction holds.** `noforce` scored 68% at 52.0
+  forwards/example, worse than 72% at 41.4 on both axes. The original
+  hypothesis said it would gain accuracy; it lost 4 points and 26% throughput.
+
+The arc is worth keeping as written: a hypothesis that explained one anomaly
+(0.99 losing on both axes), a prediction from it that failed badly (`any`), the
+inversion that failure forced, and a second prediction from the corrected
+account that held (`noforce`). The corrected account is that the forced commit
+is the anchor and the mechanism the project was built on, not overhead paid for
+termination.
 - Threshold 0.90 should **not** simply lose accuracy relative to 0.95, because
   it shifts work from forced commits to threshold commits.
 
