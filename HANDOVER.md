@@ -530,6 +530,35 @@ Whether the mechanism is error amplification specifically remains open.
 
 Report: `outputs/token2token/decoder_sweep/base50/paired_single_vs_two.md`.
 
+### Working hypothesis: the forced commit is the weak link
+
+Every cycle commits one *forced* token -- the most confident eligible position,
+whatever its confidence -- purely to guarantee the decode terminates. The other
+commits are *threshold* commits, taken only above 0.95. These are not equally
+reliable: the forced token is by construction the most confident position the
+model judged **not** confident enough to commit.
+
+Early round-2 data fits this. At threshold 0.99 the decoder scores 62.5% at
+2.47 tokens/forward on the first 16 examples, worse than 0.95 on *both* axes.
+Raising the threshold does not simply trade speed for accuracy; it suppresses
+threshold commits, so a larger share of the completion comes from forced
+commits, and accuracy falls with throughput.
+
+If that is right, two round-2 arms should move in specific directions, and they
+were queued before this was written:
+
+- `single_forward_noforce` skips the forced commit whenever the threshold
+  already selected something. It should **gain** accuracy, at some cost in
+  forwards.
+- Threshold 0.90 should **not** simply lose accuracy relative to 0.95, because
+  it shifts work from forced commits to threshold commits.
+
+If both hold, the lever that matters is the share of the completion placed by
+threshold rather than forced commits, and V4's promote objective is aimed
+correctly: pushing positions above the threshold reduces reliance on forced
+commits. If they do not hold, prefer the simpler reading that 0.95 just
+happens to sit near the optimum, and treat the V4 story with more suspicion.
+
 ### Report forwards/example, not wall seconds
 
 There is one GPU (NVIDIA GB10). Several sweep arms were run while a training
