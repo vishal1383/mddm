@@ -51,26 +51,54 @@ are still above threshold on the next forward and get committed there for free.
 |---|---:|---:|---:|
 | Catalyst, burst capped at 2 (the V2/V3 baseline) | 34/50 = 68% | 103.7 | 1.234 |
 | Catalyst, two forwards, uncapped | 34/50 = 68% | 62.0 | 2.065 |
+| Global-confidence top-k, k=1 | 29/50 = 58% | 128.0 | 1.000 |
+| Global-confidence top-k, k=3 | 30/50 = 60% | 43.0 | 2.977 |
 | Semi-autoregressive block, k=1 (**how LLaDA is normally decoded**) | 37/50 = 74% | 128.0 | 1.000 |
-| Ordinary fixed top-k, k=3 (latency-matched control) | 30/50 = 60% | 43.0 | 2.977 |
+| **Semi-autoregressive block, k=3** | **38/50 = 76%** | **44.0** | **2.909** |
 | **Single forward, one content anchor** | **36/50 = 72%** | **41.4** | **3.089** |
 
-**The headline, against the decoder LLaDA is actually generated with:**
-single-forward matches semi-autoregressive block decoding on quality and uses
-3.1x fewer model forwards. Paired over the same 50 questions: 33 correct under
-both, 4 only under block decoding, 3 only under single-forward, McNemar
-**p = 1.0000**. Forwards **-86.56 per example**, 95% CI [-90.10, -83.06].
+**The defensible claim: LLaDA can be decoded about 3x cheaper than its standard
+schedule with no measurable quality loss, and there are two different ways to
+get there.**
 
-Two weaker comparisons in the same table, for orientation:
+- Single-forward versus standard block k=1: 33 correct under both, 4 only under
+  block, 3 only under single-forward, McNemar **p = 1.0000**, forwards
+  **-86.56/example** (95% CI [-90.10, -83.06]).
+- Block k=3 versus standard block k=1: 76% versus 74% at 44.0 versus 128
+  forwards. Same conclusion, simpler mechanism.
+
+**What is *not* claimed, and an earlier draft of this section wrongly implied
+it.** At a matched forward budget, single-forward does **not** beat block
+decoding. Block k=3 scores 76% at 44.0 forwards against single-forward's 72% at
+41.4; paired, 5 versus 3 discordant, McNemar p = 0.7266, forwards +2.56 with a
+95% CI of [-0.94, +6.10]. **The two are indistinguishable on both axes.** Block
+k=3 is nominally ahead on accuracy and is the simpler decoder, so on this
+evidence it is the better practical default.
+
+The anchor work is not thereby refuted; it is scoped. Anchor choice is what
+makes the *threshold* decoder work at all (section 8b: 72% versus 58% between
+informative and uninformative anchors), and that remains the largest single
+effect measured here. But the threshold decoder is not, on this evidence,
+better than a well-configured block decoder.
+
+The open question that follows is the obvious combination, which neither
+baseline tries: block decoding commits a fixed k inside an ordered block, and
+the threshold decoder commits adaptively but lets the burst run anywhere.
+Round 4 runs blocks of 32 and 64 *with* adaptive threshold commits.
+
+Note also the gap between the two top-k schedules: global-confidence k=1 scores
+58% where block-structured k=1 scores 74%, both at 128 forwards. The decoding
+*schedule* matters far more than the token budget. Quoting only the
+global-confidence baseline, as the first version of this handover section did,
+overstated the result by a wide margin.
+
+Two weaker comparisons, for orientation:
 
 - Against the baseline the training work was actually being scored against
   (capped catalyst): 2.5x fewer forwards and +4 pp accuracy.
-- Against fixed top-k at a matched forward budget: +12 pp for the same cost.
-
-Note the size of the gap between the two top-k rows: global-confidence k=1
-scores 58% while block-structured k=1 scores 74%. The decoding *schedule*
-matters more than the token budget, and quoting only the global-confidence
-baseline would have overstated this result by a wide margin.
+- Against *global-confidence* top-k at a matched budget: +12 pp for the same
+  cost. This comparison is the weak one, since block-structured top-k is the
+  real baseline.
 
 Four things drove this, in order of size:
 
