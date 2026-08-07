@@ -94,11 +94,10 @@ def bootstrap_ci(values, samples=10_000, seed=0):
     if len(values) < 2:
         return None
     rng = random.Random(seed)
-    means = []
-    for _ in range(samples):
-        draw = [values[rng.randrange(len(values))] for _ in range(len(values))]
-        means.append(sum(draw) / len(draw))
-    means.sort()
+    count = len(values)
+    means = sorted(
+        sum(rng.choices(values, k=count)) / count for _ in range(samples)
+    )
     return [means[int(0.025 * samples)], means[int(0.975 * samples) - 1]]
 
 
