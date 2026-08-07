@@ -66,21 +66,37 @@ def main() -> None:
 
         for start in range(0, len(pending), args.batch_size):
             batch = pending[start : start + args.batch_size]
-            canvases, decode_stats = batch_threshold_unlock_decode(
-                model,
-                [item[2] for item in batch],
-                args.completion_length,
-                mask_token_id,
-                confidence_threshold=threshold,
-                max_threshold_tokens=args.max_threshold_tokens,
-                tokenizer=tokenizer,
-                device=device,
-                pad_token_id=(
-                    tokenizer.pad_token_id
-                    if tokenizer.pad_token_id is not None
-                    else mask_token_id
-                ),
+            pad_token_id = (
+                tokenizer.pad_token_id
+                if tokenizer.pad_token_id is not None
+                else mask_token_id
             )
+            if args.decoder == "topk":
+                canvases, decode_stats = batch_topk_decode(
+                    model,
+                    [item[2] for item in batch],
+                    args.completion_length,
+                    mask_token_id,
+                    tokens_per_step=args.tokens_per_step,
+                    device=device,
+                    pad_token_id=pad_token_id,
+                )
+            else:
+                canvases, decode_stats = batch_threshold_unlock_decode(
+                    model,
+                    [item[2] for item in batch],
+                    args.completion_length,
+                    mask_token_id,
+                    confidence_threshold=threshold,
+                    max_threshold_tokens=args.max_threshold_tokens,
+                    commit_threshold_on_first_forward=(
+                        args.commit_threshold_on_first_forward
+                    ),
+                    unlock_forward=args.unlock_forward,
+                    tokenizer=tokenizer,
+                    device=device,
+                    pad_token_id=pad_token_id,
+                )
             for (example_id, row, _), canvas, stats in zip(
                 batch, canvases, decode_stats
             ):
@@ -130,6 +146,12 @@ def main() -> None:
                 total_threshold_tokens / evaluated if evaluated else 0.0
             ),
             "max_threshold_tokens": args.max_threshold_tokens,
+            "decoder": args.decoder,
+            "tokens_per_step": args.tokens_per_step,
+            "commit_threshold_on_first_forward": (
+                args.commit_threshold_on_first_forward
+            ),
+            "unlock_forward": args.unlock_forward,
             "elapsed_seconds": time.time() - started,
         }
         summaries = [
@@ -153,21 +175,19 @@ def batch_threshold_unlock_decode(
     *,
     confidence_threshold,
     max_threshold_tokens=None,
+    commit_threshold_on_first_forward=False,
+    unlock_forward=True,
     tokenizer,
     device,
     pad_token_id,
 ):
     if not 0 < confidence_threshold < 1:
         raise ValueError("confidence_threshold must be in (0, 1)")
-    max_prompt = max(len(prompt_ids) for prompt_ids in prompt_ids_batch)
-    padded_prompts = []
-    prompt_masks = []
-    for prompt_ids in prompt_ids_batch:
-        padding = max_prompt - len(prompt_ids)
-        padded_prompts.append([pad_token_id] * padding + prompt_ids)
-        prompt_masks.append([0] * padding + [1] * len(prompt_ids))
-    prompts = torch.tensor(padded_prompts, device=device, dtype=torch.long)
-    prompt_attention = torch.tensor(prompt_masks, device=device, dtype=torch.long)
+    if not unlock_forward and not commit_threshold_on_first_forward:
+        raise ValueError(
+            "disabling the unlock forward requires first-forward threshold commits"
+        )
+    prompts, prompt_attention = pad_prompts(prompt_ids_batch, pad_token_id, device)
     canvases = torch.full(
         (len(prompt_ids_batch), completion_length),
         int(mask_token_id),
@@ -180,6 +200,7 @@ def batch_threshold_unlock_decode(
     catalyst_tokens = torch.zeros_like(forwards)
     cleanup_tokens = torch.zeros_like(forwards)
     threshold_tokens = torch.zeros_like(forwards)
+    first_forward_tokens = torch.zeros_like(forwards)
     allowed_cache = {}
 
     with torch.no_grad():
@@ -216,8 +237,23 @@ def batch_threshold_unlock_decode(
             catalyst_tokens[has_anchor] += 1
             cleanup_tokens[cleanup] += 1
 
+            if commit_threshold_on_first_forward:
+                masked = canvases.eq(mask_token_id)
+                selected = masked & confidence.ge(confidence_threshold)
+                selected &= active.unsqueeze(1)
+                selected = limit_threshold_selection(
+                    selected, confidence, max_threshold_tokens
+                )
+                first_forward_tokens += selected.sum(dim=1)
+                threshold_tokens += selected.sum(dim=1)
+                canvases[selected] = token_ids[selected]
+
             masked = canvases.eq(mask_token_id)
             unlock_active = masked.any(dim=1) & has_anchor
+            if not unlock_forward:
+                if bool(masked.any()):
+                    continue
+                break
             if not bool(unlock_active.any()):
                 if bool(masked.any()):
                     continue
@@ -249,10 +285,85 @@ def batch_threshold_unlock_decode(
                 "catalyst_tokens": int(catalyst_tokens[index]),
                 "cleanup_tokens": int(cleanup_tokens[index]),
                 "threshold_tokens": int(threshold_tokens[index]),
+                "first_forward_threshold_tokens": int(first_forward_tokens[index]),
                 "tokens_per_forward": completion_length / row_forwards,
             }
         )
     return canvases.detach().cpu().tolist(), rows
+
+
+def batch_topk_decode(
+    model,
+    prompt_ids_batch,
+    completion_length,
+    mask_token_id,
+    *,
+    tokens_per_step,
+    device,
+    pad_token_id,
+):
+    if tokens_per_step <= 0:
+        raise ValueError("tokens_per_step must be positive")
+    prompts, prompt_attention = pad_prompts(prompt_ids_batch, pad_token_id, device)
+    canvases = torch.full(
+        (len(prompt_ids_batch), completion_length),
+        int(mask_token_id),
+        device=device,
+        dtype=torch.long,
+    )
+    completion_attention = torch.ones_like(canvases)
+    forwards = torch.zeros(len(canvases), device=device, dtype=torch.long)
+
+    with torch.no_grad():
+        while bool(canvases.eq(mask_token_id).any()):
+            masked = canvases.eq(mask_token_id)
+            active = masked.any(dim=1)
+            confidence, token_ids = batch_canvas_predictions(
+                model,
+                prompts,
+                prompt_attention,
+                canvases,
+                completion_attention,
+                mask_token_id,
+            )
+            forwards[active] += 1
+            count = min(int(tokens_per_step), canvases.shape[1])
+            scores = confidence.masked_fill(~masked, -torch.inf)
+            positions = scores.topk(count, dim=1).indices
+            selected = torch.zeros_like(masked)
+            selected.scatter_(1, positions, True)
+            selected &= masked & active.unsqueeze(1)
+            canvases[selected] = token_ids[selected]
+
+    rows = []
+    for index in range(len(canvases)):
+        row_forwards = int(forwards[index])
+        rows.append(
+            {
+                "cycles": row_forwards,
+                "model_forwards": row_forwards,
+                "catalyst_tokens": 0,
+                "cleanup_tokens": 0,
+                "threshold_tokens": 0,
+                "first_forward_threshold_tokens": 0,
+                "tokens_per_forward": completion_length / row_forwards,
+            }
+        )
+    return canvases.detach().cpu().tolist(), rows
+
+
+def pad_prompts(prompt_ids_batch, pad_token_id, device):
+    max_prompt = max(len(prompt_ids) for prompt_ids in prompt_ids_batch)
+    padded_prompts = []
+    prompt_masks = []
+    for prompt_ids in prompt_ids_batch:
+        padding = max_prompt - len(prompt_ids)
+        padded_prompts.append([pad_token_id] * padding + prompt_ids)
+        prompt_masks.append([0] * padding + [1] * len(prompt_ids))
+    return (
+        torch.tensor(padded_prompts, device=device, dtype=torch.long),
+        torch.tensor(prompt_masks, device=device, dtype=torch.long),
+    )
 
 
 def limit_threshold_selection(selected, confidence, max_threshold_tokens):
@@ -341,6 +452,16 @@ def parse_args():
     parser.add_argument("--completion-length", type=int, default=128)
     parser.add_argument("--thresholds", default="0.95")
     parser.add_argument("--max-threshold-tokens", type=int)
+    parser.add_argument("--decoder", choices=("catalyst", "topk"), default="catalyst")
+    parser.add_argument("--tokens-per-step", type=int, default=1)
+    parser.add_argument(
+        "--commit-threshold-on-first-forward",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--unlock-forward", action=argparse.BooleanOptionalAction, default=True
+    )
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--resume", action="store_true")
@@ -351,6 +472,12 @@ def parse_args():
         parser.error("batch-size must be positive")
     if args.max_threshold_tokens is not None and args.max_threshold_tokens <= 0:
         parser.error("max-threshold-tokens must be positive")
+    if args.tokens_per_step <= 0:
+        parser.error("tokens-per-step must be positive")
+    if not args.unlock_forward and not args.commit_threshold_on_first_forward:
+        parser.error(
+            "--no-unlock-forward requires --commit-threshold-on-first-forward"
+        )
     parse_thresholds(args.thresholds)
     return args
 

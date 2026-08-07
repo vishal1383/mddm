@@ -24,6 +24,7 @@ from Token2Token.eval_gsm8k import (
 from Token2Token.eval_lm1b_loss import parse_mask_ratios
 from Token2Token.eval_threshold_gsm8k import (
     batch_threshold_unlock_decode,
+    batch_topk_decode,
     limit_threshold_selection,
     parse_thresholds,
     threshold_tag,
@@ -45,6 +46,12 @@ from Token2Token.train_anchor_transition import (
     anchor_transitions,
     masked_kl_loss,
     post_anchor_topk_positions,
+)
+from Token2Token.train_parallel_unlock import (
+    bucket_positions,
+    gold_cross_entropy,
+    preserve_kl,
+    promote_objective,
 )
 from Token2Token.train_threshold_unlock import trajectory_stages
 from Token2Token.summarize_gsm8k_sweep import build_rows, render_report
@@ -303,6 +310,66 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(stats[0]["cleanup_tokens"], 3)
         self.assertEqual(stats[0]["threshold_tokens"], 0)
 
+    def test_first_forward_commit_fills_confident_cleanup_positions(self):
+        canvases, stats = batch_threshold_unlock_decode(
+            ToyThresholdModel(),
+            [[9]],
+            3,
+            0,
+            confidence_threshold=0.95,
+            commit_threshold_on_first_forward=True,
+            tokenizer=ToyTokenizer(),
+            device="cpu",
+            pad_token_id=5,
+        )
+        self.assertEqual(canvases, [[1, 2, 3]])
+        self.assertEqual(stats[0]["cleanup_tokens"], 2)
+        self.assertEqual(stats[0]["first_forward_threshold_tokens"], 1)
+        self.assertEqual(stats[0]["model_forwards"], 2)
+
+    def test_single_forward_mode_skips_the_unlock_forward(self):
+        canvases, stats = batch_threshold_unlock_decode(
+            ToyThresholdModel(),
+            [[9]],
+            3,
+            0,
+            confidence_threshold=0.95,
+            commit_threshold_on_first_forward=True,
+            unlock_forward=False,
+            tokenizer=ToyTextTokenizer(),
+            device="cpu",
+            pad_token_id=5,
+        )
+        self.assertEqual(canvases, [[1, 2, 3]])
+        self.assertEqual(stats[0]["cycles"], stats[0]["model_forwards"])
+
+    def test_single_forward_mode_requires_first_forward_commits(self):
+        with self.assertRaises(ValueError):
+            batch_threshold_unlock_decode(
+                ToyThresholdModel(),
+                [[9]],
+                3,
+                0,
+                confidence_threshold=0.95,
+                unlock_forward=False,
+                tokenizer=ToyTokenizer(),
+                device="cpu",
+                pad_token_id=5,
+            )
+
+    def test_batched_topk_decode_places_k_tokens_per_forward(self):
+        canvases, stats = batch_topk_decode(
+            ToyThresholdModel(),
+            [[9], [8]],
+            3,
+            0,
+            tokens_per_step=2,
+            device="cpu",
+            pad_token_id=5,
+        )
+        self.assertEqual(canvases, [[1, 2, 3], [1, 2, 3]])
+        self.assertTrue(all(item["model_forwards"] == 2 for item in stats))
+
     def test_threshold_decode_cleanup_is_left_to_right(self):
         canvas = [0, 0, 0]
         trace = threshold_unlock_decode(
@@ -502,6 +569,74 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(
             post_anchor_topk_positions(logits, [0, 7, 0, 0], 0, 2),
             [2, 3],
+        )
+
+    def test_parallel_unlock_buckets_split_by_commit_decision(self):
+        teacher = torch.zeros(4, 6)
+        teacher[0, 1] = 8.0
+        teacher[1, 2] = 1.8
+        teacher[2, 5] = 8.0
+        teacher[3, 5] = 1.8
+        buckets = bucket_positions(
+            teacher,
+            [0, 0, 0, 0],
+            [1, 2, 3, 4],
+            0,
+            0.95,
+            0.5,
+        )
+        self.assertEqual(buckets["promote"], [1])
+        self.assertEqual(buckets["repair"], [2])
+        self.assertEqual(buckets["preserve"], [0, 3])
+
+    def test_repair_skips_positions_where_gold_is_not_a_live_alternative(self):
+        teacher = torch.zeros(1, 6)
+        teacher[0, 5] = 8.0
+        teacher[0, 3] = -8.0
+        confident_wrong = bucket_positions(teacher, [0], [3], 0, 0.95, 0.5, 0)
+        self.assertEqual(confident_wrong["repair"], [0])
+        filtered = bucket_positions(teacher, [0], [3], 0, 0.95, 0.5, 2)
+        self.assertEqual(filtered["repair"], [])
+        self.assertEqual(filtered["preserve"], [0])
+
+    def test_parallel_unlock_buckets_ignore_filled_positions(self):
+        teacher = torch.zeros(2, 6)
+        teacher[0, 1] = 1.8
+        teacher[1, 2] = 1.8
+        buckets = bucket_positions(teacher, [1, 0], [1, 2], 0, 0.95, 0.5)
+        self.assertEqual(buckets["promote"], [1])
+        self.assertEqual(buckets["preserve"], [])
+
+    def test_parallel_unlock_losses_are_zero_without_positions(self):
+        logits = torch.zeros(1, 2, 6, requires_grad=True)
+        zero = logits.sum() * 0.0
+        self.assertEqual(
+            float(gold_cross_entropy(logits, [[]], [1, 2], zero).detach()), 0.0
+        )
+        self.assertEqual(
+            float(preserve_kl(logits, logits, [[]], zero).detach()), 0.0
+        )
+        loss = gold_cross_entropy(logits, [[0]], [1, 2], zero)
+        loss.backward()
+        self.assertTrue(bool(logits.grad.abs().sum() > 0))
+
+    def test_promote_hinge_stops_once_the_position_is_committable(self):
+        committable = torch.zeros(1, 2, 6)
+        committable[0, 0, 1] = 12.0
+        zero = committable.sum() * 0.0
+        self.assertEqual(
+            float(promote_objective(committable, [[0]], [1, 2], zero, "hinge", 0.97)),
+            0.0,
+        )
+        self.assertGreater(
+            float(promote_objective(committable, [[0]], [1, 2], zero, "ce", 0.97)),
+            0.0,
+        )
+        undecided = torch.zeros(1, 2, 6)
+        undecided[0, 0, 1] = 1.8
+        self.assertGreater(
+            float(promote_objective(undecided, [[0]], [1, 2], zero, "hinge", 0.97)),
+            0.0,
         )
 
     def test_masked_kl_preserves_base_distribution(self):
