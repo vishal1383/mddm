@@ -265,9 +265,17 @@ def batch_threshold_unlock_decode(
                 masked,
                 tokenizer,
                 allowed_cache,
-                catalyst_filter,
+                "text" if catalyst_filter in ("text", "text-below") else "any",
                 catalyst_min_length,
             )
+            if catalyst_filter in ("below", "text-below"):
+                # A forced commit only earns its place if it commits something
+                # the threshold would not have taken anyway. The global argmax
+                # is usually already above threshold, which is why forcing it
+                # adds nothing; restricting candidates to below-threshold
+                # positions makes "adds a new token" explicit rather than a
+                # side effect of the alphabetic filter.
+                allowed = allowed & confidence.lt(confidence_threshold)
             has_anchor = allowed.any(dim=1) & active
             cleanup = active & ~has_anchor
             forcing = active
@@ -568,7 +576,9 @@ def parse_args():
     )
     parser.add_argument("--catalyst-tokens-per-forward", type=int, default=1)
     parser.add_argument(
-        "--catalyst-filter", choices=("text", "any"), default="text"
+        "--catalyst-filter",
+        choices=("text", "any", "below", "text-below"),
+        default="text",
     )
     parser.add_argument("--catalyst-min-length", type=int, default=0)
     parser.add_argument(

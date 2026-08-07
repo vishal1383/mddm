@@ -443,6 +443,29 @@ class CoreTests(unittest.TestCase):
         )
         self.assertEqual(filtered[0].tolist(), [False, True, False])
 
+    def test_below_filter_forces_only_tokens_the_threshold_would_skip(self):
+        # ToyThresholdModel: position 0 and 1 clear 0.95, position 2 does not.
+        canvases, stats = batch_threshold_unlock_decode(
+            ToyThresholdModel(),
+            [[9]],
+            3,
+            0,
+            confidence_threshold=0.95,
+            commit_threshold_on_first_forward=True,
+            unlock_forward=False,
+            catalyst_filter="below",
+            tokenizer=ToyTokenizer(),
+            device="cpu",
+            pad_token_id=5,
+        )
+        self.assertEqual(canvases, [[1, 2, 3]])
+        # The one forced commit goes to position 2, the only position the
+        # threshold would not have taken, so the whole canvas lands in one
+        # forward instead of two.
+        self.assertEqual(stats[0]["model_forwards"], 1)
+        self.assertEqual(stats[0]["catalyst_tokens"], 1)
+        self.assertEqual(stats[0]["first_forward_threshold_tokens"], 2)
+
     def test_any_catalyst_filter_removes_the_text_restriction(self):
         canvases, stats = batch_threshold_unlock_decode(
             ToyThresholdModel(),

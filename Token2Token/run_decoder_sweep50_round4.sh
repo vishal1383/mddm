@@ -37,6 +37,17 @@ run() {
     2>&1 | tee "$ROOT/$name.log"
 }
 
+# Why does the alphabetic filter work? Two candidate explanations, and the
+# ablation cannot separate them: a content word is informative, or a content
+# word is simply one the threshold would not have committed anyway (the global
+# argmax almost always is). These two arms restrict candidates to
+# below-threshold positions, which makes "adds a token the threshold would
+# skip" explicit. If `below` alone recovers most of the text filter's gain,
+# the mechanism is novelty rather than semantics.
+run single_forward_below --thresholds 0.95 $SINGLE --catalyst-filter below
+run single_forward_text_below --thresholds 0.95 $SINGLE \
+  --catalyst-filter text-below
+
 run single_forward_len3 --thresholds 0.95 $SINGLE --catalyst-min-length 3
 run single_forward_len5 --thresholds 0.95 $SINGLE --catalyst-min-length 5
 
