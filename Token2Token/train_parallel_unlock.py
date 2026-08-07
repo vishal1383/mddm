@@ -133,6 +133,12 @@ def main() -> None:
             "promote_positions": sum(len(item["promote"]) for item in buckets),
             "repair_positions": sum(len(item["repair"]) for item in buckets),
             "preserve_positions": sum(len(item["preserve"]) for item in buckets),
+            "promoted_fraction": promoted_fraction(
+                logits,
+                [item["promote"] for item in buckets],
+                gold_ids,
+                args.commit_threshold,
+            ),
             "elapsed_seconds": time.time() - started,
         }
         with log_path.open("a", encoding="utf-8") as handle:
@@ -141,7 +147,8 @@ def main() -> None:
             f"step={step} loss={row['loss']:.4f} "
             f"promote={row['promote_loss']:.4f}({row['promote_positions']}) "
             f"repair={row['repair_loss']:.4f}({row['repair_positions']}) "
-            f"preserve={row['preserve_loss']:.4f}({row['preserve_positions']})"
+            f"preserve={row['preserve_loss']:.4f}({row['preserve_positions']}) "
+            f"committable={row['promoted_fraction']:.3f}"
         )
         if args.save_every and step % args.save_every == 0:
             save_adapter(model, tokenizer, output / f"checkpoint-{step:06d}")
@@ -276,6 +283,29 @@ def promote_objective(logits, rows, gold_ids, zero, objective, target_confidence
     if not losses:
         return zero
     return torch.cat(losses).mean()
+
+
+def promoted_fraction(logits, rows, gold_ids, commit_threshold):
+    """Share of promote positions the student would now actually commit.
+
+    The hinge loss is a proxy; this is the quantity that changes decoding.
+    A run whose hinge falls while this stays near zero is moving gold
+    probability without moving any position across the commit boundary, which
+    buys no tokens per forward.
+    """
+    total = 0
+    crossed = 0
+    labels = torch.tensor(gold_ids, device=logits.device, dtype=torch.long)
+    with torch.no_grad():
+        for row_logits, positions in zip(logits, rows):
+            if not positions:
+                continue
+            index = torch.tensor(positions, device=logits.device, dtype=torch.long)
+            probabilities = torch.softmax(row_logits[index].float(), dim=-1)
+            gold = probabilities.gather(1, labels[index].unsqueeze(1)).squeeze(1)
+            total += len(positions)
+            crossed += int(gold.ge(commit_threshold).sum())
+    return crossed / total if total else 0.0
 
 
 def gold_cross_entropy(logits, rows, gold_ids, zero):

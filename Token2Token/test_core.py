@@ -50,6 +50,7 @@ from Token2Token.train_anchor_transition import (
 from Token2Token.paired_comparison import compare, mcnemar_p_value
 from Token2Token.train_parallel_unlock import (
     bucket_positions,
+    promoted_fraction,
     gold_cross_entropy,
     preserve_kl,
     promote_objective,
@@ -780,6 +781,15 @@ class CoreTests(unittest.TestCase):
             float(promote_objective(undecided, [[0]], [1, 2], zero, "hinge", 0.97)),
             0.0,
         )
+
+    def test_promoted_fraction_counts_positions_past_the_threshold(self):
+        logits = torch.zeros(1, 2, 6)
+        logits[0, 0, 1] = 12.0
+        logits[0, 1, 2] = 1.0
+        self.assertEqual(promoted_fraction(logits, [[0]], [1, 2], 0.95), 1.0)
+        self.assertEqual(promoted_fraction(logits, [[1]], [1, 2], 0.95), 0.0)
+        self.assertEqual(promoted_fraction(logits, [[0, 1]], [1, 2], 0.95), 0.5)
+        self.assertEqual(promoted_fraction(logits, [[]], [1, 2], 0.95), 0.0)
 
     def test_masked_kl_preserves_base_distribution(self):
         teacher = torch.zeros(3, 5)
