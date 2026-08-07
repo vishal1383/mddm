@@ -37,6 +37,7 @@ def main() -> None:
             canvas,
             mask_token_id,
             confidence_threshold=args.confidence_threshold,
+            max_threshold_tokens=args.max_threshold_tokens,
             device=device,
         )
     else:
@@ -129,6 +130,7 @@ def threshold_unlock_decode(
     mask_token_id,
     *,
     confidence_threshold,
+    max_threshold_tokens=None,
     device,
 ):
     if not 0 < confidence_threshold < 1:
@@ -206,6 +208,8 @@ def threshold_unlock_decode(
                 key=lambda position: float(confidence[position]),
                 reverse=True,
             )
+            if max_threshold_tokens is not None:
+                unlocked_positions = unlocked_positions[:max_threshold_tokens]
             unlocked = fill_positions(
                 tokenizer,
                 canvas,
@@ -259,9 +263,13 @@ def parse_args():
     parser.add_argument("--decode-steps", type=int, default=32)
     parser.add_argument("--tokens-per-step", type=int)
     parser.add_argument("--confidence-threshold", type=float)
+    parser.add_argument("--max-threshold-tokens", type=int)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--output")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.max_threshold_tokens is not None and args.max_threshold_tokens <= 0:
+        parser.error("max-threshold-tokens must be positive")
+    return args
 
 
 if __name__ == "__main__":

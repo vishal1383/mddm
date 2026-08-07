@@ -72,6 +72,7 @@ def main() -> None:
                 args.completion_length,
                 mask_token_id,
                 confidence_threshold=threshold,
+                max_threshold_tokens=args.max_threshold_tokens,
                 tokenizer=tokenizer,
                 device=device,
                 pad_token_id=(
@@ -128,6 +129,7 @@ def main() -> None:
             "mean_threshold_tokens": (
                 total_threshold_tokens / evaluated if evaluated else 0.0
             ),
+            "max_threshold_tokens": args.max_threshold_tokens,
             "elapsed_seconds": time.time() - started,
         }
         summaries = [
@@ -150,6 +152,7 @@ def batch_threshold_unlock_decode(
     mask_token_id,
     *,
     confidence_threshold,
+    max_threshold_tokens=None,
     tokenizer,
     device,
     pad_token_id,
@@ -230,6 +233,9 @@ def batch_threshold_unlock_decode(
             forwards[unlock_active] += 1
             selected = masked & confidence.ge(confidence_threshold)
             selected &= unlock_active.unsqueeze(1)
+            selected = limit_threshold_selection(
+                selected, confidence, max_threshold_tokens
+            )
             threshold_tokens += selected.sum(dim=1)
             canvases[selected] = token_ids[selected]
 
@@ -247,6 +253,19 @@ def batch_threshold_unlock_decode(
             }
         )
     return canvases.detach().cpu().tolist(), rows
+
+
+def limit_threshold_selection(selected, confidence, max_threshold_tokens):
+    if max_threshold_tokens is None:
+        return selected
+    if max_threshold_tokens <= 0:
+        raise ValueError("max_threshold_tokens must be positive")
+    count = min(int(max_threshold_tokens), selected.shape[1])
+    scores = confidence.masked_fill(~selected, -torch.inf)
+    positions = scores.topk(count, dim=1).indices
+    limited = torch.zeros_like(selected)
+    limited.scatter_(1, positions, True)
+    return selected & limited
 
 
 def allowed_prediction_mask(token_ids, masked, tokenizer, cache):
@@ -321,6 +340,7 @@ def parse_args():
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--completion-length", type=int, default=128)
     parser.add_argument("--thresholds", default="0.95")
+    parser.add_argument("--max-threshold-tokens", type=int)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--resume", action="store_true")
@@ -329,6 +349,8 @@ def parse_args():
     args = parser.parse_args()
     if args.batch_size <= 0:
         parser.error("batch-size must be positive")
+    if args.max_threshold_tokens is not None and args.max_threshold_tokens <= 0:
+        parser.error("max-threshold-tokens must be positive")
     parse_thresholds(args.thresholds)
     return args
 

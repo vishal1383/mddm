@@ -24,6 +24,7 @@ from Token2Token.eval_gsm8k import (
 from Token2Token.eval_lm1b_loss import parse_mask_ratios
 from Token2Token.eval_threshold_gsm8k import (
     batch_threshold_unlock_decode,
+    limit_threshold_selection,
     parse_thresholds,
     threshold_tag,
 )
@@ -40,6 +41,10 @@ from Token2Token.precompute_threshold_unlock_targets import (
     threshold_unlock_trajectory,
 )
 from Token2Token.train_standard import masked_denoising_loss
+from Token2Token.train_anchor_transition import (
+    anchor_transitions,
+    post_anchor_topk_positions,
+)
 from Token2Token.train_threshold_unlock import trajectory_stages
 from Token2Token.summarize_gsm8k_sweep import build_rows, render_report
 from Token2Token.select_best_epoch import summarize_epochs
@@ -275,6 +280,12 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(parse_thresholds(".95,.9,.95"), [0.95, 0.9])
         self.assertEqual(threshold_tag(0.95), "t0p95")
 
+    def test_threshold_selection_is_capped_by_confidence(self):
+        selected = torch.tensor([[True, True, False, True]])
+        confidence = torch.tensor([[0.96, 0.99, 1.0, 0.97]])
+        limited = limit_threshold_selection(selected, confidence, 2)
+        self.assertEqual(limited.tolist(), [[False, True, False, True]])
+
     def test_threshold_decode_uses_cleanup_for_non_text_predictions(self):
         canvases, stats = batch_threshold_unlock_decode(
             ToyThresholdModel(),
@@ -453,6 +464,43 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(
             [item["positions"] for item in stages],
             [[0], [1], [2]],
+        )
+
+    def test_anchor_transition_builds_post_anchor_canvas(self):
+        record = {
+            "gold_ids": [1, 2, 3, 4, 5],
+            "rounds": [
+                {
+                    "round": 1,
+                    "catalyst": {"gold_position": 2, "token_id": 3},
+                    "unlocked": [
+                        {"gold_position": 0, "token_id": 1, "confidence": 0.96},
+                        {"gold_position": 4, "token_id": 5, "confidence": 0.99},
+                        {"gold_position": 1, "token_id": 2, "confidence": 0.98},
+                    ],
+                },
+                {
+                    "round": 2,
+                    "catalyst": {"gold_position": 3, "token_id": 4},
+                    "unlocked": [],
+                },
+            ],
+        }
+        transitions = anchor_transitions(record, 0, 2)
+        self.assertEqual(transitions[0]["anchor"]["canvas"], [0, 0, 0, 0, 0])
+        self.assertEqual(
+            transitions[0]["post_anchor"]["canvas"], [0, 0, 3, 0, 0]
+        )
+        self.assertIsNone(transitions[1]["post_anchor"])
+
+    def test_post_anchor_topk_uses_current_model_confidence(self):
+        logits = torch.zeros(4, 8)
+        logits[0, 1] = 2.0
+        logits[2, 2] = 5.0
+        logits[3, 3] = 4.0
+        self.assertEqual(
+            post_anchor_topk_positions(logits, [0, 7, 0, 0], 0, 2),
+            [2, 3],
         )
 
     def test_threshold_comparison_reports_accuracy_and_latency(self):

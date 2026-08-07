@@ -189,6 +189,24 @@ bash Token2Token/run_threshold_eval_compare.sh
 The comparison is saved as `comparison.json` and `comparison.md` under the
 evaluation output directory.
 
+### Capped anchor-transition V2
+
+V2 retains ordinary masked-denoising CE, trains each catalyst before it is
+placed, and then trains the model's current top-two masked predictions toward
+their gold tokens after catalyst placement. The dynamic post-anchor targets
+include confident mistakes. Residual tokens are not trained with the earlier
+left-to-right cleanup objective.
+
+Train one full GSM8K epoch and run the matched 50-example base/trained check:
+
+```bash
+bash Token2Token/run_anchor_transition_v2.sh
+bash Token2Token/run_anchor_transition_v2_eval50.sh
+```
+
+Both evaluations use the same text-catalyst decoder, confidence threshold
+`0.95`, and a maximum of two threshold commits after each catalyst.
+
 ## Test
 
 ```bash
