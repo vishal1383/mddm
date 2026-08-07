@@ -102,6 +102,7 @@ def main() -> None:
                     catalyst_tokens_per_forward=args.catalyst_tokens_per_forward,
                     base_first_forward=(args.adapter_scope == "unlock"),
                     catalyst_filter=args.catalyst_filter,
+                    force_catalyst=args.force_catalyst,
                     tokenizer=tokenizer,
                     device=device,
                     pad_token_id=pad_token_id,
@@ -164,6 +165,7 @@ def main() -> None:
             "catalyst_tokens_per_forward": args.catalyst_tokens_per_forward,
             "adapter_scope": args.adapter_scope,
             "catalyst_filter": args.catalyst_filter,
+            "force_catalyst": args.force_catalyst,
             "elapsed_seconds": time.time() - started,
         }
         summaries = [
@@ -192,6 +194,7 @@ def batch_threshold_unlock_decode(
     catalyst_tokens_per_forward=1,
     base_first_forward=False,
     catalyst_filter="text",
+    force_catalyst="always",
     tokenizer,
     device,
     pad_token_id,
@@ -204,6 +207,12 @@ def batch_threshold_unlock_decode(
         )
     if catalyst_tokens_per_forward <= 0:
         raise ValueError("catalyst_tokens_per_forward must be positive")
+    if force_catalyst == "when-empty" and not commit_threshold_on_first_forward:
+        # Skipping the forced commit is only safe when the same forward is the
+        # one applying the threshold, otherwise a cycle can commit nothing.
+        raise ValueError(
+            "force_catalyst='when-empty' requires first-forward threshold commits"
+        )
     prompts, prompt_attention = pad_prompts(prompt_ids_batch, pad_token_id, device)
     canvases = torch.full(
         (len(prompt_ids_batch), completion_length),
@@ -240,17 +249,27 @@ def batch_threshold_unlock_decode(
             )
             has_anchor = allowed.any(dim=1) & active
             cleanup = active & ~has_anchor
+            forcing = active
+            if force_catalyst == "when-empty":
+                # The forced commit exists only to guarantee progress. When the
+                # threshold already selects something, forcing an extra token
+                # commits the most confident position that was still judged
+                # not confident enough, which is the decoder's least reliable
+                # commit of the cycle.
+                forcing = active & ~(masked & confidence.ge(confidence_threshold)).any(
+                    dim=1
+                )
             scores = confidence.masked_fill(~allowed, -torch.inf)
             budget = min(int(catalyst_tokens_per_forward), scores.shape[1])
             chosen = torch.zeros_like(allowed)
             chosen.scatter_(1, scores.topk(budget, dim=1).indices, True)
-            chosen &= allowed & has_anchor.unsqueeze(1)
+            chosen &= allowed & (has_anchor & forcing).unsqueeze(1)
             leftmost = torch.zeros_like(allowed)
             leftmost.scatter_(1, masked.long().argmax(dim=1, keepdim=True), True)
-            chosen |= leftmost & cleanup.unsqueeze(1)
+            chosen |= leftmost & (cleanup & forcing).unsqueeze(1)
             canvases[chosen] = token_ids[chosen]
             catalyst_tokens += (chosen & has_anchor.unsqueeze(1)).sum(dim=1)
-            cleanup_tokens[cleanup] += 1
+            cleanup_tokens[cleanup & forcing] += 1
 
             if commit_threshold_on_first_forward:
                 masked = canvases.eq(mask_token_id)
@@ -495,6 +514,9 @@ def parse_args():
         "--catalyst-filter", choices=("text", "any"), default="text"
     )
     parser.add_argument(
+        "--force-catalyst", choices=("always", "when-empty"), default="always"
+    )
+    parser.add_argument(
         "--adapter-scope", choices=("all", "unlock"), default="all"
     )
     parser.add_argument("--batch-size", type=int, default=4)
@@ -511,6 +533,10 @@ def parse_args():
         parser.error("tokens-per-step must be positive")
     if args.catalyst_tokens_per_forward <= 0:
         parser.error("catalyst-tokens-per-forward must be positive")
+    if args.force_catalyst == "when-empty" and not args.commit_threshold_on_first_forward:
+        parser.error(
+            "--force-catalyst when-empty requires --commit-threshold-on-first-forward"
+        )
     if not args.unlock_forward and not args.commit_threshold_on_first_forward:
         parser.error(
             "--no-unlock-forward requires --commit-threshold-on-first-forward"

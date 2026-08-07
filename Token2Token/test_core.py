@@ -385,6 +385,41 @@ class CoreTests(unittest.TestCase):
         self.assertGreater(model.enabled_forwards, 0)
         self.assertFalse(model.adapter_off)
 
+    def test_when_empty_skips_the_forced_commit_if_threshold_selects(self):
+        canvases, stats = batch_threshold_unlock_decode(
+            ToyThresholdModel(),
+            [[9]],
+            3,
+            0,
+            confidence_threshold=0.95,
+            commit_threshold_on_first_forward=True,
+            unlock_forward=False,
+            force_catalyst="when-empty",
+            tokenizer=ToyTextTokenizer(),
+            device="cpu",
+            pad_token_id=5,
+        )
+        self.assertEqual(canvases, [[1, 2, 3]])
+        # Positions 0 and 1 clear the threshold, so nothing is forced on the
+        # first forward; only the last position needs a forced commit.
+        self.assertEqual(stats[0]["catalyst_tokens"], 1)
+        self.assertEqual(stats[0]["first_forward_threshold_tokens"], 2)
+        self.assertEqual(stats[0]["model_forwards"], 2)
+
+    def test_when_empty_requires_first_forward_threshold_commits(self):
+        with self.assertRaises(ValueError):
+            batch_threshold_unlock_decode(
+                ToyThresholdModel(),
+                [[9]],
+                3,
+                0,
+                confidence_threshold=0.95,
+                force_catalyst="when-empty",
+                tokenizer=ToyTextTokenizer(),
+                device="cpu",
+                pad_token_id=5,
+            )
+
     def test_any_catalyst_filter_removes_the_text_restriction(self):
         canvases, stats = batch_threshold_unlock_decode(
             ToyThresholdModel(),
