@@ -26,7 +26,13 @@ MAX_STEPS="${MAX_STEPS:-2000}"
 # Aim slightly above the commit threshold so a promoted position clears it with
 # margin rather than sitting exactly on the boundary.
 PROMOTE_TARGET="${PROMOTE_TARGET:-$(python3 -c "print(min(0.99, $THRESHOLD + 0.03))")}"
-PROMOTE_MIN="${PROMOTE_MIN:-0.35}"
+# Only promote positions already within striking distance of the threshold.
+# v5_t85 ran with a floor of 0.35 and its committable fraction plateaued near
+# 0.14 while drift climbed from 0.028 to 0.044: the band was full of positions
+# at 0.4 that cannot be pushed to 0.88 without large distortion, so they
+# diluted the gradient and moved the model without ever crossing. A floor a
+# quarter below the threshold keeps the positions that can actually convert.
+PROMOTE_MIN="${PROMOTE_MIN:-$(python3 -c "print(round(max(0.3, $THRESHOLD - 0.25), 3))")}"
 PROMOTE_WEIGHT="${PROMOTE_WEIGHT:-1.0}"
 # Repair matters far more at a low threshold than at 0.95. A position base
 # commits at 0.85-0.95 confidence with the wrong token is a genuine error, not
