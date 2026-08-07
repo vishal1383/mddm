@@ -207,6 +207,14 @@ bash Token2Token/run_anchor_transition_v2_eval50.sh
 Both evaluations use the same text-catalyst decoder, confidence threshold
 `0.95`, and a maximum of two threshold commits after each catalyst.
 
+For a short preservation-focused iteration, V3 adds KL distillation from the
+same LLaDA model with its adapter disabled, uses a rank-4 `v_proj`/`attn_out`
+LoRA, and trains 500 examples:
+
+```bash
+bash Token2Token/run_anchor_transition_v3_kl.sh
+```
+
 ## Test
 
 ```bash

@@ -61,6 +61,20 @@ def main() -> None:
         )
         model_stages = anchor_stages + post_anchor_stages + [standard_stage]
 
+        teacher_logits = None
+        if args.base_kl_weight:
+            was_training = model.training
+            model.eval()
+            with torch.no_grad(), model.disable_adapter(), autocast(device, args.bf16):
+                teacher_logits = batched_completion_logits(
+                    model,
+                    prompt_ids,
+                    [standard_stage["canvas"]],
+                    device,
+                )[0].detach()
+            if was_training:
+                model.train()
+
         optimizer.zero_grad(set_to_none=True)
         with autocast(device, args.bf16):
             logits = batched_completion_logits(
@@ -86,10 +100,19 @@ def main() -> None:
                     args.max_unlock_tokens,
                 )
             standard_loss = stage_loss(logits[-1], standard_stage)
+            base_kl_loss = zero
+            if teacher_logits is not None:
+                base_kl_loss = masked_kl_loss(
+                    logits[-1],
+                    teacher_logits,
+                    standard_stage["canvas"],
+                    mask_token_id,
+                )
             loss = (
                 args.standard_loss_weight * standard_loss
                 + args.anchor_loss_weight * anchor_loss
                 + args.unlock_loss_weight * unlock_loss
+                + args.base_kl_weight * base_kl_loss
             )
 
         if not bool(torch.isfinite(loss)):
@@ -106,6 +129,7 @@ def main() -> None:
             "anchor_loss": float(anchor_loss.detach().cpu()),
             "unlock_loss": float(unlock_loss.detach().cpu()),
             "standard_loss": float(standard_loss.detach().cpu()),
+            "base_kl_loss": float(base_kl_loss.detach().cpu()),
             "sampled_transitions": len(sampled),
             "anchor_stages": len(anchor_stages),
             "post_anchor_stages": len(post_anchor_stages),
@@ -119,6 +143,7 @@ def main() -> None:
             f"step={step} loss={row['loss']:.4f} "
             f"standard={row['standard_loss']:.4f} "
             f"anchor={row['anchor_loss']:.4f} unlock={row['unlock_loss']:.4f} "
+            f"base_kl={row['base_kl_loss']:.4f} "
             f"transitions={len(sampled)} unlock_tokens={row['unlock_tokens']}"
         )
         if args.save_every and step % args.save_every == 0:
@@ -228,6 +253,26 @@ def post_anchor_topk_positions(logits, canvas, mask_token_id, count):
     return [masked[index] for index in selected]
 
 
+def masked_kl_loss(student_logits, teacher_logits, canvas, mask_token_id):
+    positions = [
+        position
+        for position, token_id in enumerate(canvas)
+        if int(token_id) == int(mask_token_id)
+    ]
+    if not positions:
+        return student_logits.sum() * 0.0
+    position_tensor = torch.tensor(
+        positions, device=student_logits.device, dtype=torch.long
+    )
+    student = student_logits[position_tensor].float()
+    teacher = teacher_logits[position_tensor].float()
+    return F.kl_div(
+        F.log_softmax(student, dim=-1),
+        F.softmax(teacher, dim=-1),
+        reduction="batchmean",
+    )
+
+
 def sample_transitions(transitions, count, rng):
     if count <= 0 or count >= len(transitions):
         return list(transitions)
@@ -268,6 +313,7 @@ def parse_args():
     parser.add_argument("--standard-loss-weight", type=float, default=1.0)
     parser.add_argument("--anchor-loss-weight", type=float, default=0.5)
     parser.add_argument("--unlock-loss-weight", type=float, default=1.0)
+    parser.add_argument("--base-kl-weight", type=float, default=0.0)
     parser.add_argument("--min-mask-ratio", type=float, default=0.15)
     parser.add_argument("--max-mask-ratio", type=float, default=1.0)
     parser.add_argument("--learning-rate", type=float, default=1e-5)
@@ -292,8 +338,12 @@ def parse_args():
         parser.error("max-unlock-tokens must be positive")
     if args.standard_loss_weight <= 0:
         parser.error("standard-loss-weight must be positive")
-    if args.anchor_loss_weight < 0 or args.unlock_loss_weight < 0:
-        parser.error("anchor and unlock loss weights must be nonnegative")
+    if (
+        args.anchor_loss_weight < 0
+        or args.unlock_loss_weight < 0
+        or args.base_kl_weight < 0
+    ):
+        parser.error("anchor, unlock, and base KL loss weights must be nonnegative")
     return args
 
 

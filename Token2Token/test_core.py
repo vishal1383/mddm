@@ -43,6 +43,7 @@ from Token2Token.precompute_threshold_unlock_targets import (
 from Token2Token.train_standard import masked_denoising_loss
 from Token2Token.train_anchor_transition import (
     anchor_transitions,
+    masked_kl_loss,
     post_anchor_topk_positions,
 )
 from Token2Token.train_threshold_unlock import trajectory_stages
@@ -501,6 +502,21 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(
             post_anchor_topk_positions(logits, [0, 7, 0, 0], 0, 2),
             [2, 3],
+        )
+
+    def test_masked_kl_preserves_base_distribution(self):
+        teacher = torch.zeros(3, 5)
+        identical = teacher.clone()
+        changed = teacher.clone()
+        changed[0, 1] = 4.0
+        self.assertAlmostEqual(
+            float(masked_kl_loss(identical, teacher, [0, 7, 0], 0)),
+            0.0,
+            places=6,
+        )
+        self.assertGreater(
+            float(masked_kl_loss(changed, teacher, [0, 7, 0], 0)),
+            0.0,
         )
 
     def test_threshold_comparison_reports_accuracy_and_latency(self):
