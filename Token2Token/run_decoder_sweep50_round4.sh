@@ -44,6 +44,14 @@ run() {
 # below-threshold positions, which makes "adds a token the threshold would
 # skip" explicit. If `below` alone recovers most of the text filter's gain,
 # the mechanism is novelty rather than semantics.
+# Block structure lifted global-confidence k=1 from 58% to 74% at an unchanged
+# forward count, so the schedule matters more than the budget. Combining it
+# with adaptive commits is the obvious thing neither baseline tries: the block
+# keeps the decode ordered, the threshold still commits as many positions as
+# the model is sure of inside it.
+run single_forward_block32 --thresholds 0.95 $SINGLE --block-length 32
+run single_forward_block64 --thresholds 0.95 $SINGLE --block-length 64
+
 run single_forward_below --thresholds 0.95 $SINGLE --catalyst-filter below
 run single_forward_text_below --thresholds 0.95 $SINGLE \
   --catalyst-filter text-below

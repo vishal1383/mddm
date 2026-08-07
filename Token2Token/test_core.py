@@ -534,6 +534,44 @@ class CoreTests(unittest.TestCase):
         )
         self.assertNotIn("commit_phase", stats[0])
 
+    def test_block_length_confines_anchor_and_burst_to_one_block(self):
+        # ToyThresholdModel is confident at positions 0 and 1, not 2. With a
+        # block of 1, the burst cannot reach position 1 until the block moves,
+        # so every position costs its own forward.
+        canvases, stats = batch_threshold_unlock_decode(
+            ToyThresholdModel(),
+            [[9]],
+            3,
+            0,
+            confidence_threshold=0.95,
+            commit_threshold_on_first_forward=True,
+            unlock_forward=False,
+            block_length=1,
+            tokenizer=ToyTextTokenizer(),
+            device="cpu",
+            pad_token_id=5,
+        )
+        self.assertEqual(canvases, [[1, 2, 3]])
+        self.assertEqual(stats[0]["model_forwards"], 3)
+        self.assertEqual(stats[0]["first_forward_threshold_tokens"], 0)
+
+    def test_unbounded_block_lets_the_burst_run_ahead(self):
+        canvases, stats = batch_threshold_unlock_decode(
+            ToyThresholdModel(),
+            [[9]],
+            3,
+            0,
+            confidence_threshold=0.95,
+            commit_threshold_on_first_forward=True,
+            unlock_forward=False,
+            tokenizer=ToyTextTokenizer(),
+            device="cpu",
+            pad_token_id=5,
+        )
+        self.assertEqual(canvases, [[1, 2, 3]])
+        self.assertEqual(stats[0]["model_forwards"], 2)
+        self.assertEqual(stats[0]["first_forward_threshold_tokens"], 1)
+
     def test_multiple_catalysts_commit_in_one_forward(self):
         canvases, stats = batch_threshold_unlock_decode(
             ToyThresholdModel(),
