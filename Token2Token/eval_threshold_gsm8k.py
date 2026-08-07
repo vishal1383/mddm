@@ -103,6 +103,7 @@ def main() -> None:
                     catalyst_tokens_per_forward=args.catalyst_tokens_per_forward,
                     base_first_forward=(args.adapter_scope == "unlock"),
                     catalyst_filter=args.catalyst_filter,
+                    catalyst_min_length=args.catalyst_min_length,
                     force_catalyst=args.force_catalyst,
                     record_commit_phase=args.record_commit_phase,
                     tokenizer=tokenizer,
@@ -168,6 +169,7 @@ def main() -> None:
             "catalyst_tokens_per_forward": args.catalyst_tokens_per_forward,
             "adapter_scope": args.adapter_scope,
             "catalyst_filter": args.catalyst_filter,
+            "catalyst_min_length": args.catalyst_min_length,
             "force_catalyst": args.force_catalyst,
             "elapsed_seconds": time.time() - started,
         }
@@ -197,6 +199,7 @@ def batch_threshold_unlock_decode(
     catalyst_tokens_per_forward=1,
     base_first_forward=False,
     catalyst_filter="text",
+    catalyst_min_length=0,
     force_catalyst="always",
     record_commit_phase=False,
     tokenizer,
@@ -258,7 +261,12 @@ def batch_threshold_unlock_decode(
             forwards[active] += 1
             cycles[active] += 1
             allowed = allowed_prediction_mask(
-                token_ids, masked, tokenizer, allowed_cache, catalyst_filter
+                token_ids,
+                masked,
+                tokenizer,
+                allowed_cache,
+                catalyst_filter,
+                catalyst_min_length,
             )
             has_anchor = allowed.any(dim=1) & active
             cleanup = active & ~has_anchor
@@ -465,7 +473,9 @@ def limit_threshold_selection(selected, confidence, max_threshold_tokens):
     return selected & limited
 
 
-def allowed_prediction_mask(token_ids, masked, tokenizer, cache, catalyst_filter="text"):
+def allowed_prediction_mask(
+    token_ids, masked, tokenizer, cache, catalyst_filter="text", min_length=0
+):
     if catalyst_filter == "any":
         # Control: the catalyst is just the most confident masked position,
         # so the decoder reduces to ordinary confidence-plus-threshold
@@ -482,7 +492,9 @@ def allowed_prediction_mask(token_ids, masked, tokenizer, cache, catalyst_filter
                 continue
             token_id = int(token_id)
             if token_id not in cache:
-                cache[token_id] = is_allowed_anchor_token(token_id, tokenizer)
+                cache[token_id] = is_allowed_anchor_token(
+                    token_id, tokenizer
+                ) and len(tokenizer.decode([token_id]).strip()) >= min_length
             row.append(cache[token_id])
         allowed.append(row)
     return torch.tensor(allowed, device=masked.device, dtype=torch.bool)
@@ -558,6 +570,7 @@ def parse_args():
     parser.add_argument(
         "--catalyst-filter", choices=("text", "any"), default="text"
     )
+    parser.add_argument("--catalyst-min-length", type=int, default=0)
     parser.add_argument(
         "--force-catalyst", choices=("always", "when-empty"), default="always"
     )

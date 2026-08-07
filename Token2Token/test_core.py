@@ -23,6 +23,7 @@ from Token2Token.eval_gsm8k import (
 )
 from Token2Token.eval_lm1b_loss import parse_mask_ratios
 from Token2Token.eval_threshold_gsm8k import (
+    allowed_prediction_mask,
     batch_threshold_unlock_decode,
     batch_topk_decode,
     current_block,
@@ -423,6 +424,24 @@ class CoreTests(unittest.TestCase):
                 device="cpu",
                 pad_token_id=5,
             )
+
+    def test_catalyst_min_length_excludes_short_words(self):
+        class ShortWordTokenizer(ToyTokenizer):
+            def decode(self, token_ids):
+                return {1: " is", 2: " apples", 3: " the"}.get(token_ids[0], "x")
+
+        masked = torch.tensor([[True, True, True]])
+        tokens = torch.tensor([[1, 2, 3]])
+        unfiltered = allowed_prediction_mask(
+            tokens, masked, ShortWordTokenizer(), {}, "text", 0
+        )
+        self.assertEqual(unfiltered[0].tolist(), [True, True, True])
+        # "is" and "the" are high-confidence but carry no information, which is
+        # the same failure mode that sank the any-token filter.
+        filtered = allowed_prediction_mask(
+            tokens, masked, ShortWordTokenizer(), {}, "text", 4
+        )
+        self.assertEqual(filtered[0].tolist(), [False, True, False])
 
     def test_any_catalyst_filter_removes_the_text_restriction(self):
         canvases, stats = batch_threshold_unlock_decode(
