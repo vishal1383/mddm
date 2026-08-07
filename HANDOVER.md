@@ -92,6 +92,23 @@ Note also the gap between the two top-k schedules: global-confidence k=1 scores
 global-confidence baseline, as the first version of this handover section did,
 overstated the result by a wide margin.
 
+**A separate result worth reporting on its own: block k=3 dominates block k=1
+outright**, 76% at 44.0 forwards/example against 74% at 128. Nominally more
+accurate at 2.9x the speed. LLaDA's usual one-token-per-forward block schedule
+is not optimal even within its own family on this task, and simply raising k
+inside the block is the single cheapest improvement available to anyone
+decoding this model. That finding needs no anchors, no threshold, and no
+training.
+
+The Pareto front over all fourteen configurations measured:
+
+| Operating point | Accuracy | Forwards/example | Tokens/forward |
+|---|---:|---:|---:|
+| Block k=3 | 38/50 = 76% | 44.0 | 2.909 |
+| Single forward, 1 anchor, threshold 0.95 | 36/50 = 72% | 41.4 | 3.089 |
+| Single forward, 1 anchor, threshold 0.90 | 34/50 = 68% | 35.7 | 3.585 |
+| Single forward, 2 anchors, threshold 0.95 | 32/50 = 64% | 27.7 | 4.624 |
+
 Two weaker comparisons, for orientation:
 
 - Against the baseline the training work was actually being scored against
