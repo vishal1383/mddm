@@ -13,7 +13,19 @@ Last updated: 2026-08-07 (second pass: decoder frontier + V4)
 - Persistent Docker container: `confident_borg`
 - Container project directory: `/workspace/DhruveshProject`
 - Host project directory: `/home/vishalg/Desktop/DhruveshProject`
-- No tmux session is running.
+- tmux is not installed in the container. Background work is launched with
+  `docker exec -d ... nohup`, and queued with the two chain scripts below.
+- Two sequential queues are running on the one GPU:
+  - `Token2Token/chain_remaining_work.sh`: round-2 decoder sweep, then V4a
+    evaluation, then the full 1,319-example benchmark. Log:
+    `outputs/token2token/chain_remaining.log`.
+  - `Token2Token/chain_followup_work.sh`: the commit-phase mechanism
+    experiment, then V4b. Waits on the first queue's PID. Log:
+    `outputs/token2token/chain_followup.log`.
+- **Do not write a waiter as `while pgrep -f <pattern>; do sleep; done`.**
+  `pgrep -f` matches full command lines, including the waiter's own, so the
+  condition never goes false. Three such waiters were queued and silently
+  never fired. Wait on explicit PIDs instead, as the chain scripts do.
 - The attempted V3 early-100 run was stopped before step 1. It produced only
   `outputs/token2token/anchor_transition_v3/train100_kl5/config.json`; there is
   no useful checkpoint to resume.
