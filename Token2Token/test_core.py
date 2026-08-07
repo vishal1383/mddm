@@ -344,6 +344,47 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(canvases, [[1, 2, 3]])
         self.assertEqual(stats[0]["cycles"], stats[0]["model_forwards"])
 
+    def test_base_first_forward_disables_the_adapter_only_for_the_catalyst(self):
+        from contextlib import contextmanager
+
+        class GatedModel(ToyThresholdModel):
+            def __init__(self):
+                super().__init__()
+                self.disabled_forwards = 0
+                self.enabled_forwards = 0
+                self.adapter_off = False
+
+            @contextmanager
+            def disable_adapter(self):
+                self.adapter_off = True
+                try:
+                    yield
+                finally:
+                    self.adapter_off = False
+
+            def forward(self, input_ids, attention_mask=None, use_cache=False):
+                if self.adapter_off:
+                    self.disabled_forwards += 1
+                else:
+                    self.enabled_forwards += 1
+                return super().forward(input_ids, attention_mask, use_cache)
+
+        model = GatedModel()
+        batch_threshold_unlock_decode(
+            model,
+            [[9]],
+            3,
+            0,
+            confidence_threshold=0.95,
+            base_first_forward=True,
+            tokenizer=ToyTextTokenizer(),
+            device="cpu",
+            pad_token_id=5,
+        )
+        self.assertGreater(model.disabled_forwards, 0)
+        self.assertGreater(model.enabled_forwards, 0)
+        self.assertFalse(model.adapter_off)
+
     def test_multiple_catalysts_commit_in_one_forward(self):
         canvases, stats = batch_threshold_unlock_decode(
             ToyThresholdModel(),
