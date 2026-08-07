@@ -466,6 +466,19 @@ gold anchors placed too deep into the completion.
 
 Report: `outputs/token2token/decoder_sweep/base50/paired_single_vs_two.md`.
 
+### Report forwards/example, not wall seconds
+
+There is one GPU (NVIDIA GB10). Several sweep arms were run while a training
+job shared it, so their wall-clock numbers are inflated by contention and are
+not comparable across arms. `single_forward` records 12.13 seconds/example
+against `catalyst_uncapped`'s 10.26 despite using 33% *fewer* forwards, purely
+because it ran under contention and the other did not.
+
+Forwards/example is contention-independent and is the metric to quote. Only
+quote seconds/example from arms that ran alone, and say so. The old section 9
+criterion included a seconds/example bound, which is unsafe for exactly this
+reason.
+
 ## 8c. Why V3 Lost: Digits, Not Language
 
 Paired inspection of the 50-example V3 run against base (2 gained, 4 lost)
