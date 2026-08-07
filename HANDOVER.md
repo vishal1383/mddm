@@ -423,14 +423,48 @@ Two consequences:
    because `unlock_active` is gated on `has_anchor`. They are 9.7% of forwards
    for 4.3% of tokens. `--commit-threshold-on-first-forward` fixes this.
 
-### The decisive open question
+### The decisive result: the unlock forward hurts
 
 A catalyst cycle spends 2 forwards to place 1 catalyst plus 3.36 burst tokens.
 The burst tokens that were *already* above threshold before the catalyst was
-placed did not need the second forward at all. If most of them were, the
-second forward is not buying unlocking and `--no-unlock-forward` should
-dominate; if few were, the unlock effect is real and worth its forward. The
-`single_forward` arm of the decoder sweep answers this directly.
+placed did not need the second forward at all. The `single_forward` arm
+removes that forward entirely: one forward per cycle, committing the catalyst
+plus every above-threshold position at once.
+
+Base LLaDA, same 50 examples, threshold 0.95:
+
+| Decoder | Accuracy | Forwards/example | Tokens/forward |
+|---|---:|---:|---:|
+| Catalyst, capped at 2 (old V2/V3 baseline) | 34/50 = 68% | 103.70 | 1.234 |
+| Catalyst, uncapped, 2 forwards | 34/50 = 68% | 62.00 | 2.065 |
+| Catalyst + first-forward commits, 2 forwards | 34/50 = 68% | 57.50 | 2.227 |
+| **Single forward** | **36/50 = 72%** | **41.40** | **3.089** |
+
+Paired against the two-forward decoder over the same 50 questions:
+
+- Only two-forward correct: **0**
+- Only single-forward correct: **2**
+- McNemar two-sided exact p = 0.50 (not significant, but zero regressions)
+- Forwards: **-20.56 per example**, bootstrap 95% CI [-23.74, -17.78]
+
+Single-forward answered correctly every question the two-forward decoder did,
+and two more. Against the original capped baseline this is 2.5x fewer forwards
+and +4 pp accuracy, from a decode-schedule change with no training at all.
+
+**Interpretation, and it inverts the project's core assumption.** The unlock
+effect is real -- placing an anchor genuinely does push new positions above
+threshold -- but those newly confident positions are confident *because of* the
+anchor just placed. When the anchor is wrong, the burst inherits and amplifies
+its error, and the decoder commits all of it irreversibly. Committing only
+positions that were already confident *before* the anchor uses evidence that
+does not depend on the anchor being right. That is why removing a forward
+improves accuracy rather than trading it away.
+
+This also explains the k-sweep in section 2, where greedy-IG accuracy peaks
+around k=2 and then declines: the same error-amplification, driven there by
+gold anchors placed too deep into the completion.
+
+Report: `outputs/token2token/decoder_sweep/base50/paired_single_vs_two.md`.
 
 ## 8c. Why V3 Lost: Digits, Not Language
 

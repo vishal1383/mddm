@@ -25,7 +25,10 @@ SAVE_EVERY="${SAVE_EVERY:-250}"
 LIMIT="${LIMIT:-50}"
 BATCH="${BATCH:-8}"
 # Decoder used for evaluation; must match whatever base was measured under.
-DECODER_ARGS="${DECODER_ARGS:---thresholds 0.95 --commit-threshold-on-first-forward}"
+# Single-forward is the round-1 sweep winner: dropping the post-anchor forward
+# reached 3.07 tokens/forward against 2.065 for the two-forward decoder, at
+# equal or better accuracy.
+DECODER_ARGS="${DECODER_ARGS:---thresholds 0.95 --commit-threshold-on-first-forward --no-unlock-forward}"
 
 TRAIN_DIR="$ROOT/$NAME/train"
 EVAL_DIR="$ROOT/$NAME/eval50"
