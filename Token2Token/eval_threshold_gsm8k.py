@@ -96,6 +96,7 @@ def main() -> None:
                     unlock_forward=args.unlock_forward,
                     catalyst_tokens_per_forward=args.catalyst_tokens_per_forward,
                     base_first_forward=(args.adapter_scope == "unlock"),
+                    catalyst_filter=args.catalyst_filter,
                     tokenizer=tokenizer,
                     device=device,
                     pad_token_id=pad_token_id,
@@ -157,6 +158,7 @@ def main() -> None:
             "unlock_forward": args.unlock_forward,
             "catalyst_tokens_per_forward": args.catalyst_tokens_per_forward,
             "adapter_scope": args.adapter_scope,
+            "catalyst_filter": args.catalyst_filter,
             "elapsed_seconds": time.time() - started,
         }
         summaries = [
@@ -184,6 +186,7 @@ def batch_threshold_unlock_decode(
     unlock_forward=True,
     catalyst_tokens_per_forward=1,
     base_first_forward=False,
+    catalyst_filter="text",
     tokenizer,
     device,
     pad_token_id,
@@ -228,7 +231,7 @@ def batch_threshold_unlock_decode(
             forwards[active] += 1
             cycles[active] += 1
             allowed = allowed_prediction_mask(
-                token_ids, masked, tokenizer, allowed_cache
+                token_ids, masked, tokenizer, allowed_cache, catalyst_filter
             )
             has_anchor = allowed.any(dim=1) & active
             cleanup = active & ~has_anchor
@@ -394,7 +397,12 @@ def limit_threshold_selection(selected, confidence, max_threshold_tokens):
     return selected & limited
 
 
-def allowed_prediction_mask(token_ids, masked, tokenizer, cache):
+def allowed_prediction_mask(token_ids, masked, tokenizer, cache, catalyst_filter="text"):
+    if catalyst_filter == "any":
+        # Control: the catalyst is just the most confident masked position,
+        # so the decoder reduces to ordinary confidence-plus-threshold
+        # decoding and any difference is attributable to the text filter.
+        return masked
     token_rows = token_ids.detach().cpu().tolist()
     masked_rows = masked.detach().cpu().tolist()
     allowed = []
@@ -478,6 +486,9 @@ def parse_args():
         "--unlock-forward", action=argparse.BooleanOptionalAction, default=True
     )
     parser.add_argument("--catalyst-tokens-per-forward", type=int, default=1)
+    parser.add_argument(
+        "--catalyst-filter", choices=("text", "any"), default="text"
+    )
     parser.add_argument(
         "--adapter-scope", choices=("all", "unlock"), default="all"
     )

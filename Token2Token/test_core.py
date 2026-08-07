@@ -385,6 +385,24 @@ class CoreTests(unittest.TestCase):
         self.assertGreater(model.enabled_forwards, 0)
         self.assertFalse(model.adapter_off)
 
+    def test_any_catalyst_filter_removes_the_text_restriction(self):
+        canvases, stats = batch_threshold_unlock_decode(
+            ToyThresholdModel(),
+            [[9]],
+            3,
+            0,
+            confidence_threshold=0.999,
+            catalyst_filter="any",
+            tokenizer=ToyTokenizer(),
+            device="cpu",
+            pad_token_id=5,
+        )
+        self.assertEqual(canvases, [[1, 2, 3]])
+        # The text filter would send every one of these digit tokens to
+        # cleanup; with the filter off they are ordinary catalysts.
+        self.assertEqual(stats[0]["cleanup_tokens"], 0)
+        self.assertEqual(stats[0]["catalyst_tokens"], 3)
+
     def test_multiple_catalysts_commit_in_one_forward(self):
         canvases, stats = batch_threshold_unlock_decode(
             ToyThresholdModel(),
