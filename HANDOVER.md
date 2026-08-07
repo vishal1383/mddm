@@ -1,19 +1,18 @@
 # MDDM Anchor / Token2Token Project Handover
 
-Last updated: 2026-08-07
+Last updated: 2026-08-07 (second pass: decoder frontier + V4)
 
 ## 1. Current State
 
 - Repository: `https://github.com/vishal1383/mddm`
 - Active branch: `agent/token2token-anchor-training`
-- Current implementation commit: `14e57e4`
-  (`Preserve base behavior during anchor training`)
+- Current implementation commit: `6d2441f`
+  (`Pin numeric positions to the base distribution`)
 - Base model throughout the latest work: `GSAI-ML/LLaDA-8B-Instruct`
 - Main dataset: GSM8K (`openai/gsm8k`, `main`)
 - Persistent Docker container: `confident_borg`
 - Container project directory: `/workspace/DhruveshProject`
 - Host project directory: `/home/vishalg/Desktop/DhruveshProject`
-- No training or evaluation process is running.
 - No tmux session is running.
 - The attempted V3 early-100 run was stopped before step 1. It produced only
   `outputs/token2token/anchor_transition_v3/train100_kl5/config.json`; there is
@@ -388,22 +387,115 @@ Artifacts:
 The attempted V3 early-100 rerun was stopped before useful work and can be
 deleted or ignored.
 
+## 8b. The Cap Was Hobbling the Baseline
+
+V2 and V3 were both measured with `--max-threshold-tokens 2`. That cap was
+introduced to stop one bad anchor corrupting dozens of positions, and it did,
+but it also capped the baseline. The same catalyst decoder without the cap is
+far faster at identical accuracy on the same 50 examples:
+
+| Decoder | Accuracy | Forwards/example | Tokens/forward | Seconds/example |
+|---|---:|---:|---:|---:|
+| Catalyst, burst capped at 2 | 34/50 = 68% | 103.70 | 1.234 | 14.87 |
+| Catalyst, burst uncapped | 34/50 = 68% | 62.00 | 2.065 | 10.26 |
+
+Identical accuracy, 40% fewer forwards, 31% less wall time. Every V2/V3
+quality/latency claim was made against the capped row, so the trained models
+were being compared to a baseline that was already handicapped. **Do not use
+the capped decoder as the baseline again.** The full-test uncapped base number
+is 951/1319 = 72.10% at 2.2318 tokens/forward.
+
+### Where the forwards actually go
+
+Breakdown of the full 1,319-example uncapped base run, per example:
+
+- 57.35 forwards, 128 tokens, 2.2318 tokens/forward
+- 31.48 cycles: 25.93 catalyst cycles (2 forwards each) + 5.55 cleanup cycles
+  (1 forward each)
+- Tokens placed: 25.93 catalyst + 5.55 cleanup + 96.52 threshold burst
+
+Two consequences:
+
+1. The threshold burst places 75% of all tokens. The catalyst mechanism itself
+   places 20%. Anything that raises burst density is worth more than anything
+   that improves catalyst choice.
+2. Cleanup forwards commit exactly one token and skip the burst entirely,
+   because `unlock_active` is gated on `has_anchor`. They are 9.7% of forwards
+   for 4.3% of tokens. `--commit-threshold-on-first-forward` fixes this.
+
+### The decisive open question
+
+A catalyst cycle spends 2 forwards to place 1 catalyst plus 3.36 burst tokens.
+The burst tokens that were *already* above threshold before the catalyst was
+placed did not need the second forward at all. If most of them were, the
+second forward is not buying unlocking and `--no-unlock-forward` should
+dominate; if few were, the unlock effect is real and worth its forward. The
+`single_forward` arm of the decoder sweep answers this directly.
+
+## 8c. Why V3 Lost: Digits, Not Language
+
+Paired inspection of the 50-example V3 run against base (2 gained, 4 lost)
+shows the losses are not degraded reasoning. V3 reproduces base's prose almost
+verbatim and then slips a digit:
+
+- Example 26: base `3 * $22.50 = $67.5`, V3 `3 * $22.50 = $67`; 243 becomes 242
+- Example 12: base reaches 13, V3 reaches 3
+- Example 16: identical opening sentences, 230 becomes 460
+
+The anchor filter is alphabetic-only, so numeric tokens are never catalysts and
+were moved purely as collateral. Numeric tokens carry the answer and have no
+redundancy to absorb an error, which is why a 0.014-nat average KL drift still
+cost four answers. Any future trainer should pin numeric positions to the base
+distribution rather than let a global LoRA move them.
+
+Note also that V3's `base_kl_loss` averaged 0.0144 against a total loss near
+2.98, so KL weight 5.0 contributed about 0.07. The "strong base preservation"
+was mostly nominal.
+
+## 8d. Why the V2/V3 Objective Was Wrong
+
+V3's `unlock_loss` settled at 3.63. That is the cross-entropy of gold at the
+model's own top-two most confident post-anchor positions, so gold had roughly
+2.7% probability there. Those positions are overwhelmingly not model errors:
+they are places where the model confidently prefers its own valid phrasing over
+the GSM8K gold rationale wording. Applying cross-entropy there teaches the
+model to abandon its own coherent completion, which is the damage mechanism
+behind both V2 (44%) and V3 (64%).
+
+The lesson generalises: "differs from the gold token" is not the same as
+"wrong". Only supervise a confident non-gold position when gold is still a live
+alternative under the base model, and never treat gold rationale wording as
+ground truth for phrasing.
+
 ## 9. Current Success Criterion
 
-On the exact same 50 GSM8K test examples and identical capped confidence
-decoder, a candidate passes only if:
+Superseded by section 8b. The capped-decoder thresholds below are kept only so
+older results stay readable; they are not the bar any more.
 
-1. Accuracy is at least the base accuracy (currently at least 34/50).
-2. Total model forwards are lower than base (currently below 5,185).
-3. Wall seconds/example are lower than base (currently below 14.87).
+- Old capped bar: at least 34/50 correct, under 5,185 forwards, under 14.87
+  seconds/example.
+- **Current bar, uncapped catalyst decoder, same 50 examples: at least 34/50
+  correct, under 3,100 total forwards (62.0/example), under 10.26
+  seconds/example.**
 
-This is only a smoke criterion. Any passing configuration should then be run on
-all 1,319 GSM8K test examples with paired confidence intervals.
+Two cautions on how to read any candidate against that bar:
 
-Also retain the original broader goal: compare against standard fixed `k=2`
-confidence decoding. The recent V2/V3 benchmark compares base and trained under
-the custom capped catalyst decoder, not yet against the ordinary fixed-`k=2`
-baseline.
+1. **50 examples cannot resolve small quality differences.** At 68% the
+   standard error is 6.6 pp, so 64% versus 68% is well inside one standard
+   error. V3 was never shown to be worse than base on quality; it was shown not
+   to be better, at a small latency cost. Use 50 examples only to reject large
+   regressions, then confirm on 500+.
+2. **A single fixed threshold is not a fair comparison.** Fine-tuning moves
+   confidence calibration, so a trained model at 0.95 can trade quality for
+   speed (or the reverse) purely through calibration drift and look like a win.
+   The honest question is whether the trained accuracy/tokens-per-forward
+   frontier sits above the base frontier across thresholds. Compare curves, not
+   points: `Token2Token/run_pareto_benchmark.sh` sweeps 0.99/0.95/0.90/0.80 for
+   both models under one decoder.
+
+The ordinary fixed-`k` confidence baseline is now measurable through the same
+harness with `--decoder topk --tokens-per-step K`, so the long-standing gap in
+section 11.4 can finally be closed.
 
 ## 10. Important Compute Constraint
 
@@ -457,6 +549,63 @@ Priority order:
    examples, then repeat on LM1B with likelihood/perplexity-style quality and
    decoding forward count.
 
+## 11b. V4: Training for Parallel Decodability
+
+`Token2Token/train_parallel_unlock.py` replaces the anchor-transition
+objective. The reasoning is section 8b: the threshold burst places 75% of all
+tokens, so tokens/forward is set by how many positions clear the threshold at
+once, not by catalyst choice. So supervise that directly.
+
+For every masked position of a realistic canvas, read the frozen base model's
+own prediction and act only where a commit decision would change:
+
+- **promote** — base already ranks gold first but sits under the threshold.
+  Raising it converts a non-commit into a correct commit. This is the only
+  bucket that buys throughput, and it is close to free: the model and gold
+  already agree, so nothing is being overridden.
+- **repair** — base is over the threshold on a non-gold token, so the decoder
+  would irreversibly commit a mistake. Gated by `--repair-max-gold-rank` so it
+  fires only where gold is still a live alternative, per section 8d. Defaults
+  to weight 0.
+- **preserve** — everything else, pinned to base with KL. Numeric positions are
+  forced into this bucket regardless (section 8c).
+
+Two details that matter:
+
+- The promote objective is a **hinge**, not cross-entropy: it stops
+  contributing once the position would commit. Cross-entropy keeps pushing
+  toward probability 1 long after the threshold is crossed, which buys no extra
+  tokens per forward and is exactly how V2 inflated confidence.
+- The bucket assignment comes from the **teacher** (frozen base) while the
+  hinge is measured on the **student**. The teacher decides where to act; the
+  student decides how much more is needed.
+
+Canvases are replayed from the cached threshold-gain trajectory, so they match
+the partially-filled states the decoder actually visits rather than
+random-mask denoising states.
+
+Runner: `Token2Token/run_parallel_unlock_v4.sh`, fully environment-driven.
+
+## 11c. New Decoder Knobs
+
+All in `Token2Token/eval_threshold_gsm8k.py`; every default reproduces the
+previous behaviour exactly, so older scripts still replay.
+
+- `--commit-threshold-on-first-forward` — the catalyst/cleanup forward also
+  commits its own above-threshold positions. Mainly recovers the wasted cleanup
+  forwards of section 8b.
+- `--no-unlock-forward` — drop the second forward entirely, one forward per
+  cycle. Requires the flag above. This is the test of whether the unlock effect
+  pays for its forward.
+- `--catalyst-tokens-per-forward N` — commit the top N eligible text tokens in
+  the first forward instead of one (handover section 10, bullet 2).
+- `--adapter-scope unlock` — run the catalyst forward under `disable_adapter`,
+  so catalyst selection and calibration stay exactly base and the adapter can
+  only affect the post-anchor burst. This is section 11.1, the gated adapter,
+  and it bounds the failure mode that sank V2.
+- `--decoder topk --tokens-per-step K` — ordinary fixed-k confidence decoding
+  through the same harness and metrics.
+
 ## 12. Key Source Files
 
 - `Token2Token/README.md`: runnable overview
@@ -474,9 +623,16 @@ Priority order:
 - `Token2Token/eval_threshold_gsm8k.py`: batched catalyst/threshold evaluation
 - `Token2Token/summarize_threshold_comparison.py`: quality/latency comparison
 - `Token2Token/test_core.py`: 39 tests at last run
+- `Token2Token/train_parallel_unlock.py`: V4 promote/repair/preserve trainer
+- `Token2Token/summarize_decoder_sweep.py`: accuracy/latency table with a
+  Pareto column
+- `Token2Token/test_core.py`: 50 tests at last run
 - `Token2Token/run_anchor_transition_v2.sh`
 - `Token2Token/run_anchor_transition_v2_eval50.sh`
 - `Token2Token/run_anchor_transition_v3_kl.sh`
+- `Token2Token/run_decoder_sweep50.sh`: base decoder frontier, no training
+- `Token2Token/run_parallel_unlock_v4.sh`: one V4 config, train then evaluate
+- `Token2Token/run_pareto_benchmark.sh`: threshold sweep for base and trained
 
 ## 13. Git History Landmarks
 
