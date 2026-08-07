@@ -542,7 +542,56 @@ Whether the mechanism is error amplification specifically remains open.
 
 Report: `outputs/token2token/decoder_sweep/base50/paired_single_vs_two.md`.
 
+### The anchor idea is confirmed; only its implementation was wrong
+
+This is the most important result in this handover, and it separates the
+project's *idea* from the *mechanism* built for it.
+
+Both single-forward variants force exactly one token per forward. They differ
+only in which token they are allowed to force: the most confident **alphabetic**
+token, or the most confident token of any kind.
+
+| Catalyst rule | Forced/forward | Threshold-unlocked/forward | Total | Accuracy | Forwards/example |
+|---|---:|---:|---:|---:|---:|
+| Alphabetic (`--catalyst-filter text`) | 1.000 | **2.089** | 3.089 | 36/50 = 72% | 41.4 |
+| Any token (`--catalyst-filter any`) | 1.000 | **0.850** | 1.850 | 29/50 = 58% | 69.2 |
+
+Paired over the same questions: text gains 11 and loses 4 (McNemar p = 0.1185)
+at **-27.76 forwards/example**, 95% CI [-32.30, -23.66].
+
+The forced commit count is identical, so the entire difference is in how many
+*other* positions cross the confidence threshold as a result. Forcing a content
+word unlocks 2.09 positions per forward. Forcing the globally most confident
+token -- typically whitespace or punctuation the model is 99.99% sure of, and
+which tells it nothing it did not already know -- unlocks 0.85.
+
+**That is the anchor hypothesis, and it is confirmed.** Choosing which token to
+commit first has a large causal effect on how many other positions become
+confidently decodable. It is worth 2.5x in burst size and 14 points of
+accuracy. The alphabetic filter, which looked like an incidental detail
+inherited from the target-cache design, is doing most of the work.
+
+What was refuted earlier is only the *implementation*: spending a dedicated
+second forward to harvest the unlock. That is unnecessary, because the unlocked
+positions are still above threshold on the next cycle's forward and get
+committed there for free, and it is harmful, because the second forward commits
+them one cycle earlier than the model would otherwise have to.
+
+So the two findings compose rather than conflict:
+
+- **Anchor selection: real and large.** Keep it. Improving it is the most
+  promising direction left.
+- **Anchor unlock harvesting: counterproductive.** Drop the second forward.
+
+This also revises section 8b's reading. The threshold burst places 75% of the
+tokens, but it only does so *because* a well-chosen anchor is placed each
+cycle. The burst is the anchor's effect, not an independent mechanism.
+
 ### Working hypothesis: the forced commit is the weak link
+
+**This hypothesis was wrong, and the table above is why.** It is kept because
+the reasoning that produced it is a trap worth seeing, and because one of its
+predictions did hold for a reason unrelated to the mechanism proposed.
 
 Every cycle commits one *forced* token -- the most confident eligible position,
 whatever its confidence -- purely to guarantee the decode terminates. The other
@@ -570,6 +619,19 @@ were queued before this was written:
   would have been committed anyway. So `any` should behave much like
   `noforce` -- **more accurate, more forwards** -- and if it does, the
   text-anchor rule is not merely inert, it is actively costing accuracy.
+
+  **Result: falsified, badly.** `any` scored 58% at 69.2 forwards/example
+  against text's 72% at 41.4: worse on both axes, not better on one. The
+  reasoning inverted the causation. It treated the forced commit as a cost
+  paid for termination, when the forced commit is the anchor and is the
+  reason the threshold burst exists at all. Because `any` almost always forces
+  a token that was already above threshold, it forces something that would
+  have been committed anyway, and so it never places the content word that
+  makes other positions decodable. Its burst collapses from 2.089 to 0.850.
+
+  The same inversion predicts `noforce` will be **worse**, not better: skipping
+  the forced commit skips the anchor. That prediction is recorded here before
+  that arm finished.
 - Threshold 0.90 should **not** simply lose accuracy relative to 0.95, because
   it shifts work from forced commits to threshold commits.
 
