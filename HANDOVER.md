@@ -1087,9 +1087,27 @@ nothing: the run shifted probability without crossing the boundary that
 matters. This is exactly what `promoted_fraction` was added to expose, and it
 was added after V4a started, so V4a's log does not contain it.
 
-Next configuration should loosen the constraint that is binding: preserve KL
-about 5 rather than 20, learning rate 3e-5, and more steps. Keep the numeric
-protection and the hinge, which are the safety properties, not the throttles.
+Evaluated at threshold 0.95 on the matched 50 examples:
+
+| Model | Accuracy | Forwards/example | Tokens/forward |
+|---|---:|---:|---:|
+| Base | 36/50 = 72% | 41.4 | 3.089 |
+| V4a checkpoint 500 | 35/50 = 70% | 41.0 | 3.120 |
+| V4a final (1000) | 36/50 = 72% | 41.5 | 3.086 |
+
+**A precise no-op.** Same answers, same forwards, same throughput.
+
+That is a better outcome than it first appears, and it should not be read as
+"the objective does not work". V2 collapsed to 44% and V3 to 64%; V4a preserved
+base behaviour *exactly*. The safety machinery -- a hinge that stops at the
+commit boundary instead of cross-entropy, KL on every untouched position,
+numeric positions pinned to base -- demonstrably holds the model in place. What
+failed was the aim, not the safety.
+
+That matters for what comes next: because the objective is now known not to
+damage the model, aggressiveness can be raised without risking the V2/V3
+collapse. The binding constraints were preserve KL 20 and learning rate 1e-5,
+and the threshold it aimed at was unreachable. V5 loosens all three.
 
 **Check the threshold sweep before spending more on this.** If base LLaDA at
 threshold 0.90 already sits where a trained model at 0.95 would, training is
