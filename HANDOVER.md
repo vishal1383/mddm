@@ -587,6 +587,41 @@ This also revises section 8b's reading. The threshold burst places 75% of the
 tokens, but it only does so *because* a well-chosen anchor is placed each
 cycle. The burst is the anchor's effect, not an independent mechanism.
 
+#### Anchors have diminishing but real marginal returns
+
+Forcing two content words per forward instead of one
+(`--catalyst-tokens-per-forward 2`):
+
+| Anchors/forward | Forced/fwd | Unlocked/fwd | Total | Accuracy | Forwards/example |
+|---|---:|---:|---:|---:|---:|
+| none informative (`any`) | 1.00 | 0.850 | 1.850 | 29/50 = 58% | 69.2 |
+| one | 1.00 | 2.089 | 3.089 | 36/50 = 72% | 41.4 |
+| two | 1.82 | 2.801 | 4.624 | 32/50 = 64% | 27.7 |
+
+The first content anchor is worth about +1.24 unlocked positions over an
+uninformative forced token. The second is worth about +0.87 more. Sub-linear,
+because the second-most-confident content word is a weaker anchor than the
+first, but far from exhausted. Forced/forward is 1.82 rather than 2.00 because
+late in a decode there are often fewer than two eligible alphabetic positions
+left.
+
+The accuracy cost is real: 72% to 64%. So anchor count is a speed lever, not a
+free win.
+
+**It is, however, a better speed lever than lowering the threshold.** Two
+anchors at threshold 0.95 give 64% at 4.624 tokens/forward; one anchor at
+threshold 0.80 gives 62% at 4.558. Almost the same throughput, and the
+multi-anchor route is no worse on accuracy. When more speed is needed, add
+anchors before lowering the threshold.
+
+Current Pareto front on the 50 examples:
+
+| Operating point | Accuracy | Tokens/forward |
+|---|---:|---:|
+| one anchor, threshold 0.95 | 72% | 3.089 |
+| one anchor, threshold 0.90 | 68% | 3.585 |
+| two anchors, threshold 0.95 | 64% | 4.624 |
+
 ### Working hypothesis: the forced commit is the weak link
 
 **This hypothesis was wrong, and the table above is why.** It is kept because
