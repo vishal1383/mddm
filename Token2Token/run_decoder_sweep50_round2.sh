@@ -58,5 +58,14 @@ run single_forward_noforce --thresholds 0.95 $SINGLE \
 # same budget, the threshold rule is not what is buying the speedup.
 run topk_k3 --decoder topk --tokens-per-step 3 --thresholds 0.95
 
+# Semi-autoregressive block decoding, which is how LLaDA is normally
+# generated. Global-confidence top-k is a weaker baseline, so reporting only
+# that would overstate the decoder result. block32_k1 is the quality
+# reference; block32_k3 is latency-matched to single_forward.
+run topk_block32_k1 --decoder topk --tokens-per-step 1 --block-length 32 \
+  --thresholds 0.95
+run topk_block32_k3 --decoder topk --tokens-per-step 3 --block-length 32 \
+  --thresholds 0.95
+
 echo "== round 2 complete =="
 python3 -m Token2Token.summarize_decoder_sweep --sweep-dir "$ROOT"

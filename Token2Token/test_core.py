@@ -25,6 +25,7 @@ from Token2Token.eval_lm1b_loss import parse_mask_ratios
 from Token2Token.eval_threshold_gsm8k import (
     batch_threshold_unlock_decode,
     batch_topk_decode,
+    current_block,
     limit_threshold_selection,
     parse_thresholds,
     threshold_tag,
@@ -518,6 +519,29 @@ class CoreTests(unittest.TestCase):
                 device="cpu",
                 pad_token_id=5,
             )
+
+    def test_current_block_tracks_the_leftmost_unfinished_block(self):
+        masked = torch.tensor([[False, False, True, True], [True, True, True, True]])
+        blocks = current_block(masked, 2)
+        # First row is filled through position 1, so the active block is [2,4).
+        self.assertEqual(blocks[0].tolist(), [False, False, True, True])
+        self.assertEqual(blocks[1].tolist(), [True, True, False, False])
+
+    def test_block_decoding_fills_left_to_right(self):
+        canvases, stats = batch_topk_decode(
+            ToyThresholdModel(),
+            [[9]],
+            3,
+            0,
+            tokens_per_step=1,
+            block_length=1,
+            device="cpu",
+            pad_token_id=5,
+        )
+        # Position 2 is the model's least confident, but block decoding still
+        # reaches it, which global confidence ordering would defer.
+        self.assertEqual(canvases, [[1, 2, 3]])
+        self.assertEqual(stats[0]["model_forwards"], 3)
 
     def test_batched_topk_decode_places_k_tokens_per_forward(self):
         canvases, stats = batch_topk_decode(

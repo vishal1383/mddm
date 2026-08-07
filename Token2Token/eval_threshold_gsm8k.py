@@ -84,6 +84,7 @@ def main() -> None:
                     args.completion_length,
                     mask_token_id,
                     tokens_per_step=args.tokens_per_step,
+                    block_length=args.block_length,
                     device=device,
                     pad_token_id=pad_token_id,
                 )
@@ -159,6 +160,7 @@ def main() -> None:
             "max_threshold_tokens": args.max_threshold_tokens,
             "decoder": args.decoder,
             "tokens_per_step": args.tokens_per_step,
+            "block_length": args.block_length,
             "commit_threshold_on_first_forward": (
                 args.commit_threshold_on_first_forward
             ),
@@ -353,11 +355,14 @@ def batch_topk_decode(
     mask_token_id,
     *,
     tokens_per_step,
+    block_length=None,
     device,
     pad_token_id,
 ):
     if tokens_per_step <= 0:
         raise ValueError("tokens_per_step must be positive")
+    if block_length is not None and block_length <= 0:
+        raise ValueError("block_length must be positive")
     prompts, prompt_attention = pad_prompts(prompt_ids_batch, pad_token_id, device)
     canvases = torch.full(
         (len(prompt_ids_batch), completion_length),
@@ -382,11 +387,14 @@ def batch_topk_decode(
             )
             forwards[active] += 1
             count = min(int(tokens_per_step), canvases.shape[1])
-            scores = confidence.masked_fill(~masked, -torch.inf)
+            eligible = masked
+            if block_length is not None:
+                eligible = masked & current_block(masked, block_length)
+            scores = confidence.masked_fill(~eligible, -torch.inf)
             positions = scores.topk(count, dim=1).indices
             selected = torch.zeros_like(masked)
             selected.scatter_(1, positions, True)
-            selected &= masked & active.unsqueeze(1)
+            selected &= eligible & active.unsqueeze(1)
             canvases[selected] = token_ids[selected]
 
     rows = []
@@ -404,6 +412,22 @@ def batch_topk_decode(
             }
         )
     return canvases.detach().cpu().tolist(), rows
+
+
+def current_block(masked, block_length):
+    """Restrict candidates to the leftmost block that still holds a mask.
+
+    This is the semi-autoregressive schedule LLaDA is normally generated with:
+    the completion is filled block by block, left to right, with confidence
+    ordering applied only inside the active block. Pure global-confidence
+    decoding is a different and weaker baseline, so quoting only that would
+    overstate any decoder result.
+    """
+    width = masked.shape[1]
+    index = torch.arange(width, device=masked.device).unsqueeze(0)
+    first_masked = masked.long().argmax(dim=1, keepdim=True)
+    block_start = (first_masked // block_length) * block_length
+    return (index >= block_start) & (index < block_start + block_length)
 
 
 def pad_prompts(prompt_ids_batch, pad_token_id, device):
@@ -521,6 +545,7 @@ def parse_args():
     parser.add_argument("--max-threshold-tokens", type=int)
     parser.add_argument("--decoder", choices=("catalyst", "topk"), default="catalyst")
     parser.add_argument("--tokens-per-step", type=int, default=1)
+    parser.add_argument("--block-length", type=int)
     parser.add_argument(
         "--commit-threshold-on-first-forward",
         action=argparse.BooleanOptionalAction,
@@ -556,6 +581,8 @@ def parse_args():
         parser.error("max-threshold-tokens must be positive")
     if args.tokens_per_step <= 0:
         parser.error("tokens-per-step must be positive")
+    if args.block_length is not None and args.block_length <= 0:
+        parser.error("block-length must be positive")
     if args.catalyst_tokens_per_forward <= 0:
         parser.error("catalyst-tokens-per-forward must be positive")
     if args.adapter_scope == "unlock" and not args.unlock_forward:
