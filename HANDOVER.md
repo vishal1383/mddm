@@ -35,6 +35,57 @@ outputs, and `PapersMisc/RecentMDDMpaper.pdf`. Do not revert or stage these by
 accident. All intended Token2Token source changes through V3 are committed and
 pushed.
 
+## 1b. Bottom Line (read this first)
+
+Everything below was measured on base LLaDA-8B-Instruct with **no training**.
+50 GSM8K test examples, 128-token completions, threshold 0.95 unless stated.
+
+**The anchor idea is right. The machinery built around it was wrong.**
+
+The project's premise was that placing one well-chosen token makes many other
+positions confidently decodable. That is true, and the effect is large. The
+mistake was spending a second model forward to collect the unlocked tokens: they
+are still above threshold on the next forward and get committed there for free.
+
+| Decoder | Accuracy | Forwards/example | Tokens/forward |
+|---|---:|---:|---:|
+| Catalyst, burst capped at 2 (the V2/V3 baseline) | 34/50 = 68% | 103.7 | 1.234 |
+| Catalyst, two forwards, uncapped | 34/50 = 68% | 62.0 | 2.065 |
+| Ordinary fixed top-k, k=3 (latency-matched control) | 30/50 = 60% | 43.0 | 2.977 |
+| **Single forward, one content anchor** | **36/50 = 72%** | **41.4** | **3.089** |
+
+Against the baseline the training work was actually being scored against:
+**2.5x fewer forwards and +4 pp accuracy, from a decode-schedule change alone.**
+Against fixed top-k at a matched forward budget: **+12 pp**.
+
+Four things drove this, in order of size:
+
+1. **Anchor quality is the dominant effect.** Forcing a content word unlocks
+   2.089 further positions per forward; forcing the globally most confident
+   token (usually whitespace or punctuation) unlocks 0.850. 72% versus 58%.
+   Section 8b.
+2. **The post-anchor unlock forward is counterproductive.** Removing it gains
+   accuracy *and* a third of the forwards. Section 8b.
+3. **The burst cap was handicapping the baseline**, so every earlier
+   quality/latency comparison was made against a hobbled reference. Section 8b.
+4. **Adaptive beats fixed.** Committing a variable number of positions, only
+   where the model clears the threshold, beats committing a fixed k.
+
+On the training line, V2 (44%) and V3 (64%) both failed, and the diagnosis is
+in sections 8c and 8d: they supervised positions where the model confidently
+preferred its own valid phrasing to the gold rationale wording, which taught it
+to abandon coherent generation. V3 was never actually shown to lose quality
+(paired McNemar p = 0.6875); its real defect was latency. V4 replaces that
+objective; V4a ran but was too conservative to move any commit decision
+(section 11b).
+
+**Caveats that matter.** 50 examples cannot resolve differences of a few
+answers: most of the accuracy comparisons here have McNemar p above 0.1. Only
+the forwards/example numbers are tight. Wall-clock is contaminated by GPU
+sharing. Completion length is 128, so absolute accuracies are not comparable to
+published LLaDA numbers. The full 1,319-example benchmark is what turns the
+headline into a claim.
+
 ## 2. Original Anchor-Decode Experiment
 
 ### Question
