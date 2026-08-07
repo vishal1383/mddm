@@ -438,6 +438,22 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(stats[0]["cleanup_tokens"], 0)
         self.assertEqual(stats[0]["catalyst_tokens"], 3)
 
+    def test_gated_adapter_requires_an_unlock_forward_to_gate(self):
+        with self.assertRaises(ValueError):
+            batch_threshold_unlock_decode(
+                ToyThresholdModel(),
+                [[9]],
+                3,
+                0,
+                confidence_threshold=0.95,
+                commit_threshold_on_first_forward=True,
+                unlock_forward=False,
+                base_first_forward=True,
+                tokenizer=ToyTextTokenizer(),
+                device="cpu",
+                pad_token_id=5,
+            )
+
     def test_multiple_catalysts_commit_in_one_forward(self):
         canvases, stats = batch_threshold_unlock_decode(
             ToyThresholdModel(),

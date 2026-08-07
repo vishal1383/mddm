@@ -207,6 +207,13 @@ def batch_threshold_unlock_decode(
         )
     if catalyst_tokens_per_forward <= 0:
         raise ValueError("catalyst_tokens_per_forward must be positive")
+    if base_first_forward and not unlock_forward:
+        # Gating the adapter to the unlock forward when there is no unlock
+        # forward disables it for every forward, silently evaluating the base
+        # model under a trained model's label.
+        raise ValueError(
+            "base_first_forward needs an unlock forward for the adapter to run"
+        )
     if force_catalyst == "when-empty" and not commit_threshold_on_first_forward:
         # Skipping the forced commit is only safe when the same forward is the
         # one applying the threshold, otherwise a cycle can commit nothing.
@@ -533,6 +540,8 @@ def parse_args():
         parser.error("tokens-per-step must be positive")
     if args.catalyst_tokens_per_forward <= 0:
         parser.error("catalyst-tokens-per-forward must be positive")
+    if args.adapter_scope == "unlock" and not args.unlock_forward:
+        parser.error("--adapter-scope unlock needs --unlock-forward")
     if args.force_catalyst == "when-empty" and not args.commit_threshold_on_first_forward:
         parser.error(
             "--force-catalyst when-empty requires --commit-threshold-on-first-forward"
