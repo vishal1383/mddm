@@ -47,6 +47,7 @@ from Token2Token.train_anchor_transition import (
     masked_kl_loss,
     post_anchor_topk_positions,
 )
+from Token2Token.paired_comparison import compare, mcnemar_p_value
 from Token2Token.train_parallel_unlock import (
     bucket_positions,
     gold_cross_entropy,
@@ -684,6 +685,33 @@ class CoreTests(unittest.TestCase):
             float(masked_kl_loss(changed, teacher, [0, 7, 0], 0)),
             0.0,
         )
+
+    def test_mcnemar_uses_only_discordant_pairs(self):
+        self.assertEqual(mcnemar_p_value(0, 0), 1.0)
+        self.assertAlmostEqual(mcnemar_p_value(4, 2), 0.6875)
+        self.assertAlmostEqual(mcnemar_p_value(2, 4), 0.6875)
+        self.assertLess(mcnemar_p_value(10, 0), 0.01)
+        # Concordant pairs never enter the test, so a large shared correct
+        # count cannot make a small discordant split look significant.
+        self.assertEqual(mcnemar_p_value(1, 1), 1.0)
+
+    def test_paired_comparison_counts_outcomes_and_forward_deltas(self):
+        def rows(flags, forwards):
+            return [
+                {"example_id": str(i), "correct": flag, "model_forwards": count}
+                for i, (flag, count) in enumerate(zip(flags, forwards))
+            ]
+
+        result = compare(
+            rows([True, True, False, False], [100, 100, 100, 100]),
+            rows([True, False, True, False], [90, 90, 90, 90]),
+        )
+        self.assertEqual(result["both_correct"], 1)
+        self.assertEqual(result["only_baseline_correct"], 1)
+        self.assertEqual(result["only_trained_correct"], 1)
+        self.assertEqual(result["neither_correct"], 1)
+        self.assertEqual(result["forward_delta_per_example"], -10.0)
+        self.assertEqual(result["mcnemar_p_value"], 1.0)
 
     def test_threshold_comparison_reports_accuracy_and_latency(self):
         baseline = add_latency_metrics(
