@@ -41,6 +41,11 @@ def main() -> None:
     for threshold in thresholds:
         tag = threshold_tag(threshold)
         rows_path = output / f"predictions_{tag}.jsonl"
+        if not args.resume and rows_path.exists():
+            # Rows are appended, so a rerun into a directory left behind by an
+            # interrupted run would silently duplicate examples and corrupt
+            # every aggregate computed from the file.
+            rows_path.unlink()
         completed = load_completed(rows_path) if args.resume else set()
         existing = list(read_jsonl(rows_path)) if args.resume else []
         correct = sum(int(row["correct"]) for row in existing)
