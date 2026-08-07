@@ -467,6 +467,26 @@ and loses 4 (McNemar p = 0.1185) at -22.56 forwards/example, 95% CI
 [-26.10, -19.06]. Committing *adaptively* is what buys both axes; committing
 *more* does not.
 
+#### The latency-matched control
+
+Fixed top-k at k=3 spends 43.0 forwards/example, against single-forward's 41.4.
+That is the same budget, so it isolates the decision rule from the speed:
+
+| Decoder | Accuracy | Forwards/example | Tokens/forward |
+|---|---:|---:|---:|
+| Fixed top-k, k=3 | 30/50 = 60% | 43.0 | 2.977 |
+| Single forward, one content anchor | 36/50 = 72% | 41.4 | 3.089 |
+
+Paired: single-forward gains 10, loses 4, **-1.56 forwards/example** with a 95%
+CI of [-5.10, +1.94], i.e. the budgets really are matched. McNemar
+p = 0.1796, so on 50 examples this is suggestive rather than conclusive; the
+effect is 12 points and the full benchmark is what settles it.
+
+This is the cleanest form of the decoder claim. Given the same number of model
+forwards, choosing *which* positions to commit -- one content anchor plus
+everything already above threshold -- beats committing a fixed three per
+forward by 12 points.
+
 Note that k=1 also lands at 58%, using 128 forwards. Committing one token at a
 time, the most conservative possible schedule, is not more accurate here --
 it is three times slower for the same accuracy. **Do not read that as beating
