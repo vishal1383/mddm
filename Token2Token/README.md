@@ -1,5 +1,19 @@
 # IG Anchor Training V1
 
+## Current recommended result
+
+The current validated direction is conservative adaptive block decoding, not
+the earlier IG-anchor trainer. It runs ordinary block32 `k=1`, then commits
+additional predictions from the same forward only when their confidence is at
+least 0.99. See [RESULTS.md](RESULTS.md) for the tuning/held-out split, controls,
+negative LoRA result, and exact numbers.
+
+Run the matched base/adaptive validation with:
+
+```bash
+LIMIT=500 BATCH=8 bash Token2Token/run_adaptive_validation.sh
+```
+
 Minimal standalone anchor-supervision experiment for
 `GSAI-ML/LLaDA-8B-Instruct`. Despite the existing folder name, V1 deliberately
 does not train Token2Token transitions.

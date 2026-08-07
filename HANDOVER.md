@@ -1,41 +1,69 @@
 # MDDM Anchor / Token2Token Project Handover
 
-Last updated: 2026-08-07 (second pass: decoder frontier + V4)
+Last updated: 2026-08-07 (third pass: held-out lookahead and adaptive decode)
 
 ## 1. Current State
 
 - Repository: `https://github.com/vishal1383/mddm`
 - Active branch: `agent/token2token-anchor-training`
-- Current implementation commit: `6d2441f`
-  (`Pin numeric positions to the base distribution`)
+- Core implementation through commit `c4577fb`
+  (`Rank lookahead targets for parallel selection`); the results files are in
+  the current branch head.
 - Base model throughout the latest work: `GSAI-ML/LLaDA-8B-Instruct`
 - Main dataset: GSM8K (`openai/gsm8k`, `main`)
 - Persistent Docker container: `confident_borg`
 - Container project directory: `/workspace/DhruveshProject`
 - Host project directory: `/home/vishalg/Desktop/DhruveshProject`
 - tmux is not installed in the container. Background work is launched with
-  `docker exec -d ... nohup`, and queued with the two chain scripts below.
-- Two sequential queues are running on the one GPU:
-  - `Token2Token/chain_remaining_work.sh`: round-2 decoder sweep, then V4a
-    evaluation, then the full 1,319-example benchmark. Log:
-    `outputs/token2token/chain_remaining.log`.
-  - `Token2Token/chain_followup_work.sh`: the commit-phase mechanism
-    experiment, then V4b. Waits on the first queue's PID. Log:
-    `outputs/token2token/chain_followup.log`.
+  `docker exec ... nohup`.
+- The matched `k=1` and adaptive-threshold confirmation on 500 GSM8K test
+  examples is complete. Log:
+  `outputs/token2token/online_lookahead_v6/validation500_chain_batch8.log`.
+- Standard `k=1` scores 383/500; adaptive threshold 0.99 scores 385/500.
 - **Do not write a waiter as `while pgrep -f <pattern>; do sleep; done`.**
   `pgrep -f` matches full command lines, including the waiter's own, so the
   condition never goes false. Three such waiters were queued and silently
   never fired. Wait on explicit PIDs instead, as the chain scripts do.
-- The attempted V3 early-100 run was stopped before step 1. It produced only
-  `outputs/token2token/anchor_transition_v3/train100_kl5/config.json`; there is
-  no useful checkpoint to resume.
+- The reproducible command and current result table are in
+  `Token2Token/RESULTS.md` and `Token2Token/run_adaptive_validation.sh`.
 
 The working tree contains unrelated generated `__pycache__` changes, report
 outputs, and `PapersMisc/RecentMDDMpaper.pdf`. Do not revert or stage these by
-accident. All intended Token2Token source changes through V3 are committed and
-pushed.
+accident. All intended source changes through the selection-ranking objective
+are committed and pushed.
 
-## 1b. Bottom Line (read this first)
+## 1b. Current Bottom Line (read this first)
+
+On the first 500 GSM8K test examples, with IDs 0-49 used for exploration and
+IDs 50-499 held out, the conservative adaptive decoder is the only current
+configuration that meets the quality/efficiency target:
+
+| Decoder | Evaluation | Held-out result | Forwards/example |
+|---|---:|---:|---:|
+| Standard block32 `k=1` | 383/500 (76.6%) | 346/450 (76.9%) | 128.0 |
+| Adaptive any-token, threshold 0.99 | 385/500 (77.0%) | 349/450 (77.6%) | 71.2 |
+| Fixed block32 `k=3` | 138/200 (69.0%) | 100/150 (66.7%) | 44.0 |
+| Lookahead LoRA checkpoint 125, `k=2` | 147/200 (73.5%) | 110/150 (73.3%) | 64.0 |
+
+The adaptive rule runs standard blockwise `k=1`, then commits any additional
+positions from the same logits whose top-token probability is at least 0.99.
+It uses no adapter or oracle information. On 450 held-out examples its paired
+outcomes against `k=1` are 345 both correct, 1 only `k=1` correct, 4 only
+adaptive correct, and 100 neither correct. This is a nominal +3 answers and a
+44.6% forward reduction on the held-out slice.
+
+The current LoRA training objective does not qualify: scaling from 100 to 500
+training prompts did not remove the held-out quality loss. A direct
+teacher-position selection-ranking loss is implemented but not yet evaluated.
+
+This is a substantial held-out validation result, but it covers 500 of 1,319
+GSM8K test examples and should not be described as a full-test-set result.
+
+## 1c. Historical 50-Example Decoder Exploration (superseded)
+
+The section below records the exploration that selected later experiments. Its
+first-50 accuracy comparisons are not final evidence. In particular, the
+apparent block `k=3` win reversed significantly on the next 150 examples.
 
 Everything below was measured on base LLaDA-8B-Instruct with **no training**.
 50 GSM8K test examples, 128-token completions, threshold 0.95 unless stated.

@@ -589,6 +589,35 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(stats[0]["cleanup_tokens"], 0)
         self.assertEqual(stats[0]["catalyst_tokens"], 3)
 
+    def test_high_threshold_any_decoder_reduces_to_block_k1(self):
+        adaptive, adaptive_stats = batch_threshold_unlock_decode(
+            ToyThresholdModel(),
+            [[9]],
+            3,
+            0,
+            confidence_threshold=0.999999,
+            commit_threshold_on_first_forward=True,
+            unlock_forward=False,
+            catalyst_filter="any",
+            block_length=2,
+            tokenizer=ToyTokenizer(),
+            device="cpu",
+            pad_token_id=5,
+        )
+        standard, standard_stats = batch_topk_decode(
+            ToyThresholdModel(),
+            [[9]],
+            3,
+            0,
+            tokens_per_step=1,
+            block_length=2,
+            device="cpu",
+            pad_token_id=5,
+        )
+        self.assertEqual(adaptive, standard)
+        self.assertEqual(adaptive_stats[0]["model_forwards"], 3)
+        self.assertEqual(standard_stats[0]["model_forwards"], 3)
+
     def test_gated_adapter_requires_an_unlock_forward_to_gate(self):
         with self.assertRaises(ValueError):
             batch_threshold_unlock_decode(
