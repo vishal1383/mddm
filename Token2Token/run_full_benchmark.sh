@@ -19,23 +19,41 @@ SINGLE="--commit-threshold-on-first-forward --no-unlock-forward"
 
 mkdir -p "$ROOT"
 
+BLOCK_LIMIT="${BLOCK_LIMIT:-500}"
+
 evaluate() {
   local name="$1"
-  shift
-  echo "== $name =="
+  local limit="$2"
+  shift 2
+  echo "== $name (limit $limit) =="
   python3 -m Token2Token.eval_threshold_gsm8k \
     --model-label "$name" \
     --thresholds "$THRESHOLD" \
     --completion-length 128 \
     --batch-size "$BATCH" \
-    --limit "$LIMIT" \
+    --limit "$limit" \
     --resume \
     --output-dir "$ROOT/$name" \
     "$@" \
     2>&1 | tee -a "$ROOT/$name.log"
 }
 
-evaluate base_single_forward $SINGLE
+evaluate base_single_forward "$LIMIT" $SINGLE
+
+# Semi-autoregressive block decoding is how LLaDA is normally generated, so it
+# is the baseline a decoding claim has to clear. k=3 spends 42.7
+# forwards/example against single-forward's 41.4, which makes it a latency
+# match rather than a quality-versus-speed trade. Run on a subset: 500 paired
+# examples resolve a difference of about 4 pp, and the arm costs as much per
+# example as the main one.
+evaluate base_block32_k3 "$BLOCK_LIMIT" \
+  --decoder topk --tokens-per-step 3 --block-length 32
+
+python3 -m Token2Token.paired_comparison \
+  --baseline-predictions "$ROOT/base_block32_k3/predictions_t0p95.jsonl" \
+  --trained-predictions "$ROOT/base_single_forward/predictions_t0p95.jsonl" \
+  --baseline-label block32_k3 --trained-label single_forward \
+  --output "$ROOT/paired_single_vs_block32_k3.md"
 
 # The two-forward arm already exists at full scale under an identical config
 # (threshold 0.95, 128 tokens, uncapped burst, no adapter), so pair against it
@@ -50,7 +68,7 @@ if [[ -f "$TWO_FORWARD" ]]; then
 fi
 
 if [[ -n "${ADAPTER_PATH:-}" ]]; then
-  evaluate trained_single_forward $SINGLE --adapter-path "$ADAPTER_PATH"
+  evaluate trained_single_forward "$LIMIT" $SINGLE --adapter-path "$ADAPTER_PATH"
   python3 -m Token2Token.paired_comparison \
     --baseline-predictions "$ROOT/base_single_forward/predictions_t0p95.jsonl" \
     --trained-predictions "$ROOT/trained_single_forward/predictions_t0p95.jsonl" \
