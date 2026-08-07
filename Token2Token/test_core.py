@@ -52,7 +52,11 @@ from Token2Token.train_anchor_transition import (
 )
 from Token2Token.commit_phase_analysis import analyse as analyse_commit_phases
 from Token2Token.summarize_decoder_sweep import pareto_front
-from Token2Token.paired_comparison import compare, mcnemar_p_value
+from Token2Token.paired_comparison import (
+    compare,
+    filtered_shared_ids,
+    mcnemar_p_value,
+)
 from Token2Token.train_parallel_unlock import (
     bucket_positions,
     promoted_fraction,
@@ -1100,6 +1104,16 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(result["neither_correct"], 1)
         self.assertEqual(result["forward_delta_per_example"], -10.0)
         self.assertEqual(result["mcnemar_p_value"], 1.0)
+
+    def test_paired_comparison_can_hold_out_an_id_range(self):
+        baseline = {str(i): {} for i in range(6)}
+        trained = {str(i): {} for i in range(1, 7)}
+        self.assertEqual(
+            filtered_shared_ids(
+                baseline, trained, min_example_id=2, max_example_id=5
+            ),
+            ["2", "3", "4"],
+        )
 
     def test_threshold_comparison_reports_accuracy_and_latency(self):
         baseline = add_latency_metrics(

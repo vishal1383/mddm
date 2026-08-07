@@ -21,7 +21,12 @@ def main() -> None:
     args = parse_args()
     baseline = load_rows(Path(args.baseline_predictions))
     trained = load_rows(Path(args.trained_predictions))
-    shared = sorted(set(baseline) & set(trained), key=int)
+    shared = filtered_shared_ids(
+        baseline,
+        trained,
+        min_example_id=args.min_example_id,
+        max_example_id=args.max_example_id,
+    )
     if not shared:
         raise SystemExit("no overlapping example ids")
     result = compare(
@@ -33,6 +38,18 @@ def main() -> None:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(report, encoding="utf-8")
     print(report)
+
+
+def filtered_shared_ids(
+    baseline, trained, min_example_id=None, max_example_id=None
+):
+    """Return matched numeric IDs inside the requested half-open interval."""
+    shared = sorted(set(baseline) & set(trained), key=int)
+    if min_example_id is not None:
+        shared = [key for key in shared if int(key) >= min_example_id]
+    if max_example_id is not None:
+        shared = [key for key in shared if int(key) < max_example_id]
+    return shared
 
 
 def load_rows(path: Path):
@@ -175,8 +192,17 @@ def parse_args():
     parser.add_argument("--trained-predictions", required=True)
     parser.add_argument("--baseline-label", default="base")
     parser.add_argument("--trained-label", default="trained")
+    parser.add_argument("--min-example-id", type=int)
+    parser.add_argument("--max-example-id", type=int)
     parser.add_argument("--output")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if (
+        args.min_example_id is not None
+        and args.max_example_id is not None
+        and args.min_example_id >= args.max_example_id
+    ):
+        parser.error("min-example-id must be smaller than max-example-id")
+    return args
 
 
 if __name__ == "__main__":
