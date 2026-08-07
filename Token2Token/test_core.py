@@ -69,6 +69,10 @@ from Token2Token.train_lookahead_distillation import (
     future_token_loss,
     sample_rollout_stages,
 )
+from Token2Token.train_online_lookahead import (
+    normalize_canvas,
+    teacher_lookahead_stages,
+)
 from Token2Token.train_threshold_unlock import trajectory_stages
 from Token2Token.summarize_gsm8k_sweep import build_rows, render_report
 from Token2Token.select_best_epoch import summarize_epochs
@@ -197,6 +201,28 @@ class CoreTests(unittest.TestCase):
         }
         loss = future_token_loss(logits, [stage], mask_token_id=0)
         self.assertLess(float(loss), 0.001)
+
+    def test_online_teacher_targets_the_post_anchor_action(self):
+        stages, _ = teacher_lookahead_stages(
+            ToyThresholdModel(),
+            [9],
+            [[0, 0, 0]],
+            mask_token_id=0,
+            block_length=3,
+            lookahead=2,
+            device="cpu",
+        )
+        self.assertEqual(
+            stages[0]["targets"],
+            [
+                {"position": 0, "token_id": 1},
+                {"position": 1, "token_id": 2},
+            ],
+        )
+
+    def test_online_canvas_is_normalized_to_inference_length(self):
+        self.assertEqual(normalize_canvas([1, 2], 4, 0), [1, 2, 0, 0])
+        self.assertEqual(normalize_canvas([1, 2, 3], 2, 0), [1, 2])
 
     def test_target_selection_excludes_far_right_tail(self):
         targets = select_targets(
