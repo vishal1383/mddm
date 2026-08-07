@@ -51,12 +51,26 @@ are still above threshold on the next forward and get committed there for free.
 |---|---:|---:|---:|
 | Catalyst, burst capped at 2 (the V2/V3 baseline) | 34/50 = 68% | 103.7 | 1.234 |
 | Catalyst, two forwards, uncapped | 34/50 = 68% | 62.0 | 2.065 |
+| Semi-autoregressive block, k=1 (**how LLaDA is normally decoded**) | 37/50 = 74% | 128.0 | 1.000 |
 | Ordinary fixed top-k, k=3 (latency-matched control) | 30/50 = 60% | 43.0 | 2.977 |
 | **Single forward, one content anchor** | **36/50 = 72%** | **41.4** | **3.089** |
 
-Against the baseline the training work was actually being scored against:
-**2.5x fewer forwards and +4 pp accuracy, from a decode-schedule change alone.**
-Against fixed top-k at a matched forward budget: **+12 pp**.
+**The headline, against the decoder LLaDA is actually generated with:**
+single-forward matches semi-autoregressive block decoding on quality and uses
+3.1x fewer model forwards. Paired over the same 50 questions: 33 correct under
+both, 4 only under block decoding, 3 only under single-forward, McNemar
+**p = 1.0000**. Forwards **-86.56 per example**, 95% CI [-90.10, -83.06].
+
+Two weaker comparisons in the same table, for orientation:
+
+- Against the baseline the training work was actually being scored against
+  (capped catalyst): 2.5x fewer forwards and +4 pp accuracy.
+- Against fixed top-k at a matched forward budget: +12 pp for the same cost.
+
+Note the size of the gap between the two top-k rows: global-confidence k=1
+scores 58% while block-structured k=1 scores 74%. The decoding *schedule*
+matters more than the token budget, and quoting only the global-confidence
+baseline would have overstated this result by a wide margin.
 
 Four things drove this, in order of size:
 
