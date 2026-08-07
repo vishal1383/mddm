@@ -17,6 +17,7 @@ from Token2Token.train_anchor_transition import anchor_transitions, read_records
 from Token2Token.train_lookahead_distillation import (
     decoder_kl_loss,
     future_token_loss,
+    target_selection_loss,
     transition_metrics,
 )
 from Token2Token.train_threshold_unlock import (
@@ -76,11 +77,19 @@ def main() -> None:
         with autocast(device, args.bf16):
             logits = batched_completion_logits(model, prompt_ids, canvases, device)
             transition_loss = future_token_loss(logits, stages, mask_token_id)
+            selection_loss = target_selection_loss(
+                logits,
+                stages,
+                mask_token_id,
+                args.block_length,
+                args.selection_margin,
+            )
             preserve_loss = decoder_kl_loss(
                 logits, teacher_logits, stages, mask_token_id
             )
             loss = (
                 args.transition_loss_weight * transition_loss
+                + args.selection_loss_weight * selection_loss
                 + args.preserve_kl_weight * preserve_loss
             )
         if not bool(torch.isfinite(loss)):
@@ -97,6 +106,7 @@ def main() -> None:
             "example_id": record["example_id"],
             "loss": float(loss.detach().cpu()),
             "transition_loss": float(transition_loss.detach().cpu()),
+            "selection_loss": float(selection_loss.detach().cpu()),
             "preserve_kl": float(preserve_loss.detach().cpu()),
             "states": len(stages),
             "teacher_targets": [stage["targets"] for stage in stages],
@@ -108,6 +118,7 @@ def main() -> None:
         print(
             f"step={step} loss={row['loss']:.4f} "
             f"transition={row['transition_loss']:.4f} "
+            f"selection_loss={row['selection_loss']:.4f} "
             f"preserve={row['preserve_kl']:.4f} "
             f"future_top1={row['future_top1_fraction']:.3f} "
             f"selected={row['target_selection_fraction']:.3f} "
@@ -229,6 +240,8 @@ def parse_args():
     parser.add_argument("--states-per-example", type=int, default=4)
     parser.add_argument("--max-unlock-tokens", type=int, default=2)
     parser.add_argument("--transition-loss-weight", type=float, default=1.0)
+    parser.add_argument("--selection-loss-weight", type=float, default=0.0)
+    parser.add_argument("--selection-margin", type=float, default=0.1)
     parser.add_argument("--preserve-kl-weight", type=float, default=5.0)
     parser.add_argument("--learning-rate", type=float, default=3e-5)
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
@@ -255,6 +268,13 @@ def parse_args():
         parser.error("counts and lengths must be positive")
     if args.lookahead < 2:
         parser.error("lookahead must be at least 2")
+    if min(
+        args.transition_loss_weight,
+        args.selection_loss_weight,
+        args.selection_margin,
+        args.preserve_kl_weight,
+    ) < 0:
+        parser.error("loss weights and selection margin must be nonnegative")
     return args
 
 

@@ -10,6 +10,12 @@ NAME="${NAME:-k${LOOKAHEAD}_train100_step250}"
 RECORD_LIMIT="${RECORD_LIMIT:-100}"
 MAX_STEPS="${MAX_STEPS:-250}"
 SAVE_EVERY="${SAVE_EVERY:-125}"
+STATES_PER_EXAMPLE="${STATES_PER_EXAMPLE:-4}"
+TRANSITION_LOSS_WEIGHT="${TRANSITION_LOSS_WEIGHT:-1.0}"
+SELECTION_LOSS_WEIGHT="${SELECTION_LOSS_WEIGHT:-0.0}"
+SELECTION_MARGIN="${SELECTION_MARGIN:-0.1}"
+PRESERVE_KL_WEIGHT="${PRESERVE_KL_WEIGHT:-5.0}"
+LEARNING_RATE="${LEARNING_RATE:-3e-5}"
 TARGETS_FILE="${TARGETS_FILE:-outputs/token2token/threshold_unlock/gsm8k_train_t095_gain_text_q07_max512.jsonl}"
 TRAIN_DIR="$ROOT/$NAME/train"
 EVAL_DIR="$ROOT/$NAME/eval50"
@@ -25,10 +31,12 @@ if [[ ! -f "$TRAIN_DIR/adapter-final/adapter_config.json" ]]; then
     --completion-length 128 \
     --block-length 32 \
     --lookahead "$LOOKAHEAD" \
-    --states-per-example 4 \
-    --transition-loss-weight 1.0 \
-    --preserve-kl-weight 5.0 \
-    --learning-rate 3e-5 \
+    --states-per-example "$STATES_PER_EXAMPLE" \
+    --transition-loss-weight "$TRANSITION_LOSS_WEIGHT" \
+    --selection-loss-weight "$SELECTION_LOSS_WEIGHT" \
+    --selection-margin "$SELECTION_MARGIN" \
+    --preserve-kl-weight "$PRESERVE_KL_WEIGHT" \
+    --learning-rate "$LEARNING_RATE" \
     --save-every "$SAVE_EVERY" \
     --output-dir "$TRAIN_DIR" \
     2>&1 | tee "$ROOT/$NAME/train.log"

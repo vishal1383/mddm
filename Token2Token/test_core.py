@@ -72,6 +72,7 @@ from Token2Token.precompute_teacher_rollouts import (
 from Token2Token.train_lookahead_distillation import (
     future_token_loss,
     sample_rollout_stages,
+    target_selection_loss,
 )
 from Token2Token.train_online_lookahead import (
     normalize_canvas,
@@ -205,6 +206,25 @@ class CoreTests(unittest.TestCase):
         }
         loss = future_token_loss(logits, [stage], mask_token_id=0)
         self.assertLess(float(loss), 0.001)
+
+    def test_selection_loss_prefers_all_teacher_positions_over_competitors(self):
+        stage = {
+            "canvas": [0, 0, 0],
+            "targets": [
+                {"position": 0, "token_id": 1},
+                {"position": 1, "token_id": 2},
+            ],
+        }
+        good = torch.zeros(1, 3, 5)
+        good[0, 0, 1] = 8.0
+        good[0, 1, 2] = 7.0
+        good[0, 2, 3] = 1.0
+        bad = good.clone()
+        bad[0, 2, 3] = 9.0
+        self.assertLess(
+            float(target_selection_loss(good, [stage], 0, 3)),
+            float(target_selection_loss(bad, [stage], 0, 3)),
+        )
 
     def test_online_teacher_targets_the_post_anchor_action(self):
         stages, _ = teacher_lookahead_stages(

@@ -172,6 +172,49 @@ def future_token_loss(logits, stages, mask_token_id):
     return torch.cat(losses).mean()
 
 
+def target_selection_loss(
+    logits, stages, mask_token_id, block_length, margin=0.0
+):
+    """Rank every teacher target above every competing position in its block."""
+    losses = []
+    for row_logits, stage in zip(logits, stages):
+        targets = stage["targets"]
+        if not targets:
+            continue
+        rows = row_logits.float().clone()
+        rows[:, int(mask_token_id)] = -1e4
+        log_probabilities = F.log_softmax(rows, dim=-1)
+        confidence = log_probabilities.max(dim=-1).values
+        masked = torch.tensor(
+            [[int(token_id) == int(mask_token_id) for token_id in stage["canvas"]]],
+            device=logits.device,
+            dtype=torch.bool,
+        )
+        competitors = (masked & current_block(masked, block_length))[0]
+        positions = torch.tensor(
+            [int(item["position"]) for item in targets],
+            device=logits.device,
+            dtype=torch.long,
+        )
+        labels = torch.tensor(
+            [int(item["token_id"]) for item in targets],
+            device=logits.device,
+            dtype=torch.long,
+        )
+        competitors[positions] = False
+        if not bool(competitors.any()):
+            continue
+        target_scores = log_probabilities[positions, labels]
+        hardest_competitor = confidence.masked_fill(
+            ~competitors, -torch.inf
+        ).max()
+        weakest_target = target_scores.min()
+        losses.append(F.softplus(hardest_competitor - weakest_target + margin))
+    if not losses:
+        return logits.sum() * 0.0
+    return torch.stack(losses).mean()
+
+
 def decoder_kl_loss(student_logits, teacher_logits, stages, mask_token_id):
     losses = []
     for student, teacher, stage in zip(student_logits, teacher_logits, stages):
