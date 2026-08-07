@@ -29,7 +29,6 @@ run() {
   echo "== $name =="
   python3 -m Token2Token.eval_threshold_gsm8k \
     --model-label "base_llada8b_${name}" \
-    --thresholds 0.95 \
     --completion-length 128 \
     --batch-size "$BATCH" \
     --limit "$LIMIT" \
@@ -38,8 +37,18 @@ run() {
     2>&1 | tee "$ROOT/$name.log"
 }
 
-run single_forward_len3 $SINGLE --catalyst-min-length 3
-run single_forward_len5 $SINGLE --catalyst-min-length 5
+run single_forward_len3 --thresholds 0.95 $SINGLE --catalyst-min-length 3
+run single_forward_len5 --thresholds 0.95 $SINGLE --catalyst-min-length 5
+
+# The two levers pull in opposite directions on accuracy, so try them
+# together. Anchors buy throughput and cost accuracy; a stricter threshold
+# costs throughput and (from 0.99 versus 0.95) also cost accuracy on its own,
+# but that was because it starved the burst. With two anchors feeding the
+# burst, a stricter threshold may filter the burst rather than starve it.
+run single_forward_cat2_t99 --thresholds 0.99 $SINGLE \
+  --catalyst-tokens-per-forward 2
+run single_forward_cat3 --thresholds 0.95 $SINGLE \
+  --catalyst-tokens-per-forward 3
 
 echo "== round 4 complete =="
 python3 -m Token2Token.summarize_decoder_sweep --sweep-dir "$ROOT"
