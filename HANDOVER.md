@@ -464,6 +464,29 @@ This also explains the k-sweep in section 2, where greedy-IG accuracy peaks
 around k=2 and then declines: the same error-amplification, driven there by
 gold anchors placed too deep into the completion.
 
+### The two differing examples say exactly what the unlock forward commits
+
+Only two of the 50 questions decode differently, and both diverge on a single
+arithmetic token, in both cases the *result of a multiplication*:
+
+- Example 9, gold 460. Two-forward writes `$10 x1.2 = $16 per hour`, then
+  `$16 x 5 = $80`, and answers 480. Single-forward writes `$10 x 1.2 = $12`,
+  then `$12 x 5 = $60`, and answers 460.
+- Example 39, gold 18. Two-forward writes `3*2 = 12 miles per hour` and answers
+  36. Single-forward writes `3 * 2 = 6 miles per hour` and answers 18.
+
+A product position is precisely a position that only becomes confident once its
+operands are on the canvas. That is exactly the class of token the unlock
+forward exists to capture, and it is the class it gets wrong. Committing a
+dependent token in the same cycle as the dependency it was waiting on means
+the model never re-examines it against the rest of the completion; its
+confidence comes from the local operands alone. Deferring it by one cycle,
+which is all single-forward does, lets more of the completion settle first and
+the arithmetic comes out right.
+
+The practical rule: **high confidence created by the token you just committed
+is not independent evidence.** Do not spend a forward harvesting it.
+
 Report: `outputs/token2token/decoder_sweep/base50/paired_single_vs_two.md`.
 
 ### Report forwards/example, not wall seconds
