@@ -578,6 +578,7 @@ happens to sit near the optimum, and treat the V4 story with more suspicion.
 | 0.99 | 34/50 = 68% | 50.4 | 2.541 |
 | 0.95 | 36/50 = 72% | 41.4 | 3.089 |
 | 0.90 | 34/50 = 68% | 35.7 | 3.585 |
+| 0.80 | 31/50 = 62% | 28.1 | 4.558 |
 
 **Confirmed:** raising the threshold to 0.99 loses on *both* axes. A plain
 speed-versus-quality view does not predict that; the forced-commit account
@@ -598,11 +599,22 @@ accuracy moves only between 34 and 36 correct out of 50. That is two examples;
 U-shape as established until the full benchmark, which now runs 0.95 and 0.90
 over all 1,319 examples in one process for exactly this reason.
 
-A consequence worth recording: a round-3 script extending the curve to 0.70,
-0.60 and 0.50 was written on the expectation that lower would keep winning
-(`Token2Token/run_decoder_sweep50_round3.sh`). It was **not** run, because
-0.90 showed accuracy already degrading. Run it only if the full benchmark
-shows 0.90 matching 0.95 on quality.
+Below 0.95 the trade is ordinary and steady: 0.80 gives up ten points of
+accuracy for 47% more throughput. Three of the four thresholds sit on the
+Pareto front (0.95, 0.90, 0.80); only 0.99 is dominated outright, which is the
+part that needed explaining.
+
+Two process notes on this sweep, both worth carrying:
+
+- **Do not read partial runs.** At 8 examples 0.90 showed 75% and looked like
+  a free win; at 16 it showed 56%; it finished at 68%. At 16 examples 0.80
+  showed 44% and looked like a collapse; it finished at 62%. Every intermediate
+  reading here was misleading in one direction or the other.
+- A round-3 script extending the curve to 0.70/0.60/0.50 was written when 0.90
+  looked like a free win (`Token2Token/run_decoder_sweep50_round3.sh`). It is
+  queued at the end of the work rather than dropped: the thresholds are cheap
+  (fewer forwards per example) and they complete the frontier, but nothing
+  down there is expected to be a usable operating point.
 
 ### Report forwards/example, not wall seconds
 
