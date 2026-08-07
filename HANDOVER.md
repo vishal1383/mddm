@@ -682,6 +682,38 @@ random-mask denoising states.
 
 Runner: `Token2Token/run_parallel_unlock_v4.sh`, fully environment-driven.
 
+### V4a result: the objective works, the settings are too conservative
+
+1,000 steps over 1,000 examples, promote weight 1.0, repair 0, preserve KL 20,
+learning rate 1e-5, LoRA rank 8, numeric positions protected. 42 minutes.
+
+- Promote hinge fell 0.257 -> 0.213 and flattened.
+- Preserve KL stayed at 0.0024, so base behaviour was held tightly.
+- About 15 promote positions per step, stable.
+
+A hinge of 0.213 with target 0.97 implies the unsatisfied promote positions sit
+at gold probability about 0.785. They started near 0.735. **They need to reach
+0.95 to change a single commit decision**, so most of that movement bought
+nothing: the run shifted probability without crossing the boundary that
+matters. This is exactly what `promoted_fraction` was added to expose, and it
+was added after V4a started, so V4a's log does not contain it.
+
+Next configuration should loosen the constraint that is binding: preserve KL
+about 5 rather than 20, learning rate 3e-5, and more steps. Keep the numeric
+protection and the hinge, which are the safety properties, not the throttles.
+
+**Check the threshold sweep before spending more on this.** If base LLaDA at
+threshold 0.90 already sits where a trained model at 0.95 would, training is
+buying nothing that a decoder parameter does not, and V4 should be dropped
+rather than tuned. Round 2 measures exactly that.
+
+### Generation-length caveat
+
+Everything here uses `--completion-length 128`. Published LLaDA-8B-Instruct
+GSM8K numbers use a longer generation budget, so the absolute accuracies in
+this handover are not comparable to the paper's. All arms share the budget, so
+the comparisons between them are valid; the absolute level is not a claim.
+
 ## 11c. New Decoder Knobs
 
 All in `Token2Token/eval_threshold_gsm8k.py`; every default reproduces the
