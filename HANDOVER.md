@@ -438,7 +438,18 @@ Base LLaDA, same 50 examples, threshold 0.95:
 | Catalyst, capped at 2 (old V2/V3 baseline) | 34/50 = 68% | 103.70 | 1.234 |
 | Catalyst, uncapped, 2 forwards | 34/50 = 68% | 62.00 | 2.065 |
 | Catalyst + first-forward commits, 2 forwards | 34/50 = 68% | 57.50 | 2.227 |
+| Ordinary fixed top-k, k=2 | 29/50 = 58% | 64.00 | 2.000 |
 | **Single forward** | **36/50 = 72%** | **41.40** | **3.089** |
+
+The fixed top-k row is the control that section 11.4 had been asking for since
+the beginning, and it settles a question the project never tested: the
+speedup is not simply "commit more tokens per forward". Ordinary k=2 commits
+two tokens every forward unconditionally and lands at 58% for 64
+forwards/example. Single-forward commits a variable number, only where the
+model clears 0.95, and reaches 72% for 41.4. Paired, single-forward gains 11
+and loses 4 (McNemar p = 0.1185) at -22.56 forwards/example, 95% CI
+[-26.10, -19.06]. Committing *adaptively* is what buys both axes; committing
+*more* does not.
 
 Paired against the two-forward decoder over the same 50 questions:
 
