@@ -103,6 +103,7 @@ def main() -> None:
                     base_first_forward=(args.adapter_scope == "unlock"),
                     catalyst_filter=args.catalyst_filter,
                     force_catalyst=args.force_catalyst,
+                    record_commit_phase=args.record_commit_phase,
                     tokenizer=tokenizer,
                     device=device,
                     pad_token_id=pad_token_id,
@@ -195,6 +196,7 @@ def batch_threshold_unlock_decode(
     base_first_forward=False,
     catalyst_filter="text",
     force_catalyst="always",
+    record_commit_phase=False,
     tokenizer,
     device,
     pad_token_id,
@@ -234,6 +236,8 @@ def batch_threshold_unlock_decode(
     cleanup_tokens = torch.zeros_like(forwards)
     threshold_tokens = torch.zeros_like(forwards)
     first_forward_tokens = torch.zeros_like(forwards)
+    # 1 catalyst, 2 cleanup, 3 first-forward threshold, 4 unlock threshold.
+    commit_phase = torch.zeros_like(canvases)
     allowed_cache = {}
 
     with torch.no_grad():
@@ -275,6 +279,8 @@ def batch_threshold_unlock_decode(
             leftmost.scatter_(1, masked.long().argmax(dim=1, keepdim=True), True)
             chosen |= leftmost & (cleanup & forcing).unsqueeze(1)
             canvases[chosen] = token_ids[chosen]
+            commit_phase[chosen & has_anchor.unsqueeze(1)] = 1
+            commit_phase[chosen & cleanup.unsqueeze(1)] = 2
             catalyst_tokens += (chosen & has_anchor.unsqueeze(1)).sum(dim=1)
             cleanup_tokens[cleanup & forcing] += 1
 
@@ -288,6 +294,7 @@ def batch_threshold_unlock_decode(
                 first_forward_tokens += selected.sum(dim=1)
                 threshold_tokens += selected.sum(dim=1)
                 canvases[selected] = token_ids[selected]
+                commit_phase[selected] = 3
 
             masked = canvases.eq(mask_token_id)
             unlock_active = masked.any(dim=1) & has_anchor
@@ -315,6 +322,7 @@ def batch_threshold_unlock_decode(
             )
             threshold_tokens += selected.sum(dim=1)
             canvases[selected] = token_ids[selected]
+            commit_phase[selected] = 4
 
     rows = []
     for index in range(len(canvases)):
@@ -328,6 +336,11 @@ def batch_threshold_unlock_decode(
                 "threshold_tokens": int(threshold_tokens[index]),
                 "first_forward_threshold_tokens": int(first_forward_tokens[index]),
                 "tokens_per_forward": completion_length / row_forwards,
+                **(
+                    {"commit_phase": commit_phase[index].detach().cpu().tolist()}
+                    if record_commit_phase
+                    else {}
+                ),
             }
         )
     return canvases.detach().cpu().tolist(), rows
@@ -522,6 +535,11 @@ def parse_args():
     )
     parser.add_argument(
         "--force-catalyst", choices=("always", "when-empty"), default="always"
+    )
+    parser.add_argument(
+        "--record-commit-phase",
+        action=argparse.BooleanOptionalAction,
+        default=False,
     )
     parser.add_argument(
         "--adapter-scope", choices=("all", "unlock"), default="all"

@@ -455,6 +455,40 @@ class CoreTests(unittest.TestCase):
                 pad_token_id=5,
             )
 
+    def test_commit_phase_records_which_rule_placed_each_token(self):
+        canvases, stats = batch_threshold_unlock_decode(
+            ToyThresholdModel(),
+            [[9]],
+            3,
+            0,
+            confidence_threshold=0.95,
+            record_commit_phase=True,
+            tokenizer=ToyTextTokenizer(),
+            device="cpu",
+            pad_token_id=5,
+        )
+        self.assertEqual(canvases, [[1, 2, 3]])
+        phases = stats[0]["commit_phase"]
+        self.assertEqual(len(phases), 3)
+        self.assertEqual(phases[0], 1)
+        # Position 1 clears the threshold only after the catalyst is placed,
+        # so it is an unlock commit rather than a catalyst commit.
+        self.assertEqual(phases[1], 4)
+        self.assertTrue(all(phase in (1, 2, 3, 4) for phase in phases))
+
+    def test_commit_phase_is_omitted_unless_requested(self):
+        _, stats = batch_threshold_unlock_decode(
+            ToyThresholdModel(),
+            [[9]],
+            3,
+            0,
+            confidence_threshold=0.95,
+            tokenizer=ToyTextTokenizer(),
+            device="cpu",
+            pad_token_id=5,
+        )
+        self.assertNotIn("commit_phase", stats[0])
+
     def test_multiple_catalysts_commit_in_one_forward(self):
         canvases, stats = batch_threshold_unlock_decode(
             ToyThresholdModel(),
