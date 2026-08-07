@@ -571,6 +571,39 @@ correctly: pushing positions above the threshold reduces reliance on forced
 commits. If they do not hold, prefer the simpler reading that 0.95 just
 happens to sit near the optimum, and treat the V4 story with more suspicion.
 
+#### Outcome: half right, and the half that failed matters
+
+| Threshold | Accuracy | Forwards/example | Tokens/forward |
+|---:|---:|---:|---:|
+| 0.99 | 34/50 = 68% | 50.4 | 2.541 |
+| 0.95 | 36/50 = 72% | 41.4 | 3.089 |
+| 0.90 | 34/50 = 68% | 35.7 | 3.585 |
+
+**Confirmed:** raising the threshold to 0.99 loses on *both* axes. A plain
+speed-versus-quality view does not predict that; the forced-commit account
+does, since a higher threshold suppresses threshold commits and shifts the
+completion onto the forced token.
+
+**Falsified:** lowering to 0.90 does not keep accuracy. It buys 16% throughput
+and gives back the same two answers that 0.99 did.
+
+So accuracy is U-shaped in the threshold with a peak near 0.95, while
+throughput rises monotonically as the threshold falls. 0.95 was inherited from
+the original setup but does sit near the accuracy optimum.
+
+**The honest caveat is bigger than the finding.** Across the whole sweep
+accuracy moves only between 34 and 36 correct out of 50. That is two examples;
+50 examples cannot resolve it. What the sweep establishes reliably is the
+*throughput* curve, which moves 2.54 -> 3.09 -> 3.59. Do not report the
+U-shape as established until the full benchmark, which now runs 0.95 and 0.90
+over all 1,319 examples in one process for exactly this reason.
+
+A consequence worth recording: a round-3 script extending the curve to 0.70,
+0.60 and 0.50 was written on the expectation that lower would keep winning
+(`Token2Token/run_decoder_sweep50_round3.sh`). It was **not** run, because
+0.90 showed accuracy already degrading. Run it only if the full benchmark
+shows 0.90 matching 0.95 on quality.
+
 ### Report forwards/example, not wall seconds
 
 There is one GPU (NVIDIA GB10). Several sweep arms were run while a training
