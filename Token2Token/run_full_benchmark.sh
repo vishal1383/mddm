@@ -14,7 +14,13 @@ export PYTHONUNBUFFERED=1
 ROOT="${ROOT:-outputs/token2token/full_benchmark}"
 LIMIT="${LIMIT:-1319}"
 BATCH="${BATCH:-8}"
-THRESHOLD="${THRESHOLD:-0.95}"
+# Two thresholds in one process, so the model loads once. On 50 examples the
+# threshold moved throughput a lot (2.54 -> 3.09 -> 3.59 tokens/forward for
+# 0.99/0.95/0.90) but accuracy only between 34 and 36 correct, which 50
+# examples cannot resolve. Deciding the operating point needs the full set.
+# 0.95 must stay in the list: the existing full two-forward run is at 0.95, and
+# that pairing is the headline comparison.
+THRESHOLD="${THRESHOLD:-0.95,0.90}"
 SINGLE="--commit-threshold-on-first-forward --no-unlock-forward"
 
 mkdir -p "$ROOT"
@@ -24,11 +30,12 @@ BLOCK_LIMIT="${BLOCK_LIMIT:-500}"
 evaluate() {
   local name="$1"
   local limit="$2"
-  shift 2
-  echo "== $name (limit $limit) =="
+  local thresholds="$3"
+  shift 3
+  echo "== $name (limit $limit, thresholds $thresholds) =="
   python3 -m Token2Token.eval_threshold_gsm8k \
     --model-label "$name" \
-    --thresholds "$THRESHOLD" \
+    --thresholds "$thresholds" \
     --completion-length 128 \
     --batch-size "$BATCH" \
     --limit "$limit" \
@@ -38,7 +45,7 @@ evaluate() {
     2>&1 | tee -a "$ROOT/$name.log"
 }
 
-evaluate base_single_forward "$LIMIT" $SINGLE
+evaluate base_single_forward "$LIMIT" "$THRESHOLD" $SINGLE
 
 # Semi-autoregressive block decoding is how LLaDA is normally generated, so it
 # is the baseline a decoding claim has to clear. k=3 spends 42.7
@@ -46,7 +53,9 @@ evaluate base_single_forward "$LIMIT" $SINGLE
 # match rather than a quality-versus-speed trade. Run on a subset: 500 paired
 # examples resolve a difference of about 4 pp, and the arm costs as much per
 # example as the main one.
-evaluate base_block32_k3 "$BLOCK_LIMIT" \
+# Block decoding ignores the threshold, so run it at one value only;
+# passing the list would decode the same thing twice.
+evaluate base_block32_k3 "$BLOCK_LIMIT" 0.95 \
   --decoder topk --tokens-per-step 3 --block-length 32
 
 python3 -m Token2Token.paired_comparison \
@@ -68,7 +77,8 @@ if [[ -f "$TWO_FORWARD" ]]; then
 fi
 
 if [[ -n "${ADAPTER_PATH:-}" ]]; then
-  evaluate trained_single_forward "$LIMIT" $SINGLE --adapter-path "$ADAPTER_PATH"
+  evaluate trained_single_forward "$LIMIT" "$THRESHOLD" $SINGLE \
+    --adapter-path "$ADAPTER_PATH"
   python3 -m Token2Token.paired_comparison \
     --baseline-predictions "$ROOT/base_single_forward/predictions_t0p95.jsonl" \
     --trained-predictions "$ROOT/trained_single_forward/predictions_t0p95.jsonl" \
