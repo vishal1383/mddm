@@ -49,6 +49,7 @@ from Token2Token.train_anchor_transition import (
     post_anchor_topk_positions,
 )
 from Token2Token.commit_phase_analysis import analyse as analyse_commit_phases
+from Token2Token.summarize_decoder_sweep import pareto_front
 from Token2Token.paired_comparison import compare, mcnemar_p_value
 from Token2Token.train_parallel_unlock import (
     bucket_positions,
@@ -883,6 +884,34 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(unlock["correct_share"], 0.0)
         self.assertGreater(unlock["wrong_share"], 0.0)
         self.assertGreater(unlock["difference"], 0.0)
+
+    def test_pareto_front_keeps_only_undominated_configs(self):
+        def row(name, accuracy, tokens_per_forward):
+            return {
+                "config": name,
+                "accuracy": accuracy,
+                "tokens_per_forward": tokens_per_forward,
+            }
+
+        rows = [
+            row("single_forward", 0.72, 3.089),
+            row("catalyst_uncapped", 0.68, 2.065),
+            row("fast_but_poor", 0.50, 5.0),
+            row("slow_but_good", 0.75, 1.0),
+        ]
+        front = {item["config"] for item in pareto_front(rows)}
+        # Dominated on both axes by single_forward.
+        self.assertNotIn("catalyst_uncapped", front)
+        # Each of these wins on one axis, so none of them is dominated.
+        self.assertEqual(front, {"single_forward", "fast_but_poor", "slow_but_good"})
+
+    def test_pareto_front_drops_exact_duplicates_of_a_better_row(self):
+        rows = [
+            {"config": "a", "accuracy": 0.7, "tokens_per_forward": 3.0},
+            {"config": "b", "accuracy": 0.7, "tokens_per_forward": 2.0},
+        ]
+        front = {item["config"] for item in pareto_front(rows)}
+        self.assertEqual(front, {"a"})
 
     def test_mcnemar_uses_only_discordant_pairs(self):
         self.assertEqual(mcnemar_p_value(0, 0), 1.0)
