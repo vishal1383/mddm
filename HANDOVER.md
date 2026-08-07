@@ -1096,6 +1096,56 @@ threshold 0.90 already sits where a trained model at 0.95 would, training is
 buying nothing that a decoder parameter does not, and V4 should be dropped
 rather than tuned. Round 2 measures exactly that.
 
+### The design error in V4, and V5
+
+V4a was read as "the objective does not move anything". That reading is wrong,
+and the mistake is worth stating plainly because it nearly closed a live line
+of work.
+
+V4a moved its promote positions from gold probability about 0.735 to about
+0.785 and was judged a failure because nothing crossed **0.95**. But 0.95 is a
+free parameter. It was chosen at the start of the project and never varied
+during training; its only justification is that *base* LLaDA happens to peak
+there (section 8b). A trained model has no reason to peak in the same place.
+**At a decode threshold of 0.85, the positions V4a moved are already
+committable.** The objective did work; it was measured against a threshold that
+was never part of the design.
+
+So V4 held the wrong axis fixed. It swept the objective and froze the
+threshold, when the two have to be co-designed.
+
+**V5 trains and decodes at a matched threshold.**
+`Token2Token/run_threshold_matched_v5.sh`, swept by
+`Token2Token/chain_v5_sweep.sh`.
+
+The reasoning:
+
+- Lowering the decode threshold is free throughput. Base goes from 41.4
+  forwards/example at 0.95 to 35.7 at 0.90 and 28.1 at 0.80.
+- What it costs is accuracy: 72% to 68% to 62%. Those losses are **wrong
+  commits in the 0.80-0.95 confidence band**.
+- That band is precisely what the promote and repair buckets are shaped to
+  fix. Promote pushes gold-agreeing positions over the (now lower) bar; repair
+  fixes positions committed wrongly just above it.
+- Repair is also much safer at a low threshold. At 0.95, a confident non-gold
+  prediction is usually the model preferring its own valid phrasing, which is
+  what made repair dangerous (section 8d). At 0.85-0.95 the model is genuinely
+  uncertain, so gold is a live alternative and the supervision is honest.
+
+**Win condition:** reach base's 0.95 accuracy (72%, 36/50) while decoding at
+0.85 or below, where base itself only manages roughly 65% but spends about 32
+forwards/example instead of 41.4. That is the project's stated goal -- same
+quality, better throughput -- stated as a measurable target for the first time.
+
+The sweep covers the axes V4 never touched: threshold (0.80/0.85/0.90),
+aggressiveness (preserve KL 5 versus 1, learning rate 3e-5 versus 1e-4), LoRA
+capacity (rank 8 versus 32), and an ablation isolating promote from repair.
+
+**Method note.** Do not conclude from a single failed training configuration
+that a training direction is dead. V4a failed at one point in a large space,
+with two throttles (preserve KL 20, learning rate 1e-5) and a threshold that
+was never varied. That is one cell, not a verdict on the space.
+
 ### Generation-length caveat
 
 Everything here uses `--completion-length 128`. Published LLaDA-8B-Instruct
