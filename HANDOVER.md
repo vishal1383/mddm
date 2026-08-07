@@ -438,11 +438,15 @@ Base LLaDA, same 50 examples, threshold 0.95:
 | Catalyst, capped at 2 (old V2/V3 baseline) | 34/50 = 68% | 103.70 | 1.234 |
 | Catalyst, uncapped, 2 forwards | 34/50 = 68% | 62.00 | 2.065 |
 | Catalyst + first-forward commits, 2 forwards | 34/50 = 68% | 57.50 | 2.227 |
+| Ordinary fixed top-k, k=1 | 29/50 = 58% | 128.00 | 1.000 |
 | Ordinary fixed top-k, k=2 | 29/50 = 58% | 64.00 | 2.000 |
 | **Single forward** | **36/50 = 72%** | **41.40** | **3.089** |
 
-The fixed top-k row is the control that section 11.4 had been asking for since
-the beginning, and it settles a question the project never tested: the
+Single-forward is the only Pareto-optimal row: nothing else matches it on
+either axis, let alone both.
+
+The fixed top-k rows are the control that section 11.4 had been asking for
+since the beginning, and they settle a question the project never tested: the
 speedup is not simply "commit more tokens per forward". Ordinary k=2 commits
 two tokens every forward unconditionally and lands at 58% for 64
 forwards/example. Single-forward commits a variable number, only where the
@@ -450,6 +454,17 @@ model clears 0.95, and reaches 72% for 41.4. Paired, single-forward gains 11
 and loses 4 (McNemar p = 0.1185) at -22.56 forwards/example, 95% CI
 [-26.10, -19.06]. Committing *adaptively* is what buys both axes; committing
 *more* does not.
+
+Note that k=1 also lands at 58%, using 128 forwards. Committing one token at a
+time, the most conservative possible schedule, is not more accurate here --
+it is three times slower for the same accuracy. **Do not read that as beating
+LLaDA's own decoding.** Global-confidence top-k is not how LLaDA is generated;
+the standard schedule is semi-autoregressive, filling the completion block by
+block with confidence ordering only inside the active block, and it is a
+stronger baseline. Round 2 measures it (`topk_block32_k1` as the quality
+reference, `topk_block32_k3` latency-matched to single-forward). Until those
+land, the honest claim is bounded: single-forward dominates the catalyst
+decoder family and global-confidence top-k.
 
 Paired against the two-forward decoder over the same 50 questions:
 
