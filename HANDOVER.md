@@ -911,57 +911,69 @@ The ordinary fixed-`k` confidence baseline is now measurable through the same
 harness with `--decoder topk --tokens-per-step K`, so the long-standing gap in
 section 11.4 can finally be closed.
 
-## 10. Important Compute Constraint
+## 10. Compute Constraint (resolved)
 
-The current catalyst algorithm uses two forwards per cycle:
+This section used to state that the catalyst algorithm costs two forwards per
+cycle -- one to place a catalyst, one to collect the burst -- capping it at 1.5
+tokens/forward under a burst cap of two, and listed four possible escapes:
+unlock four or more tokens per catalyst, place several catalysts in the first
+forward, remove the second forward, or use speculative verification.
 
-1. One forward to choose/place a catalyst.
-2. One forward after placement to identify the confidence burst.
+**The third escape was the answer, and the first two were also measured.**
 
-With a cap of two burst tokens, a cycle places at most three tokens over two
-forwards: at most 1.5 tokens/forward. Therefore this capped diagnostic cannot
-beat a perfect ordinary `k=2` decoder in raw forward count. It is useful for
-checking whether the causal anchor mechanism can work without catastrophic
-errors. A final speed-oriented design must eventually do at least one of:
+- Removing the dedicated second forward: 3.089 tokens/forward at *higher*
+  accuracy. Section 8b.
+- Placing several catalysts in the first forward: works, sub-linearly, and
+  costs accuracy. Two anchors give 4.624 tokens/forward at 64%.
+- Unlocking four or more tokens per catalyst: not reached. One content anchor
+  unlocks 2.089; two unlock 2.801 between them.
+- Speculative verification: never tried, and no longer obviously needed.
 
-- Unlock at least four additional tokens after one catalyst (five tokens over
-  two forwards beats two tokens/forward).
-- Place multiple catalysts in the first forward.
-- Remove the dedicated second forward.
-- Use speculative/parallel verification.
+The constraint that replaced it is different in kind: throughput is now set by
+**how many positions clear the confidence threshold at once**, and that is
+governed by anchor quality. See section 11.
 
 ## 11. Recommended Next Experiments
 
+The original list here targeted the V2/V3 anchor-transition trainer and a
+two-forward decoder. Both are superseded. What follows replaces it.
+
 Priority order:
 
-1. **Gated adapter experiment.** Use base LLaDA (adapter disabled) for catalyst
-   selection and ordinary steps. Enable the adapter only for the post-anchor
-   forward. Train only the post-anchor transition. This isolates the learned
-   behavior and prevents the adapter from globally changing anchor selection
-   and confidence calibration.
-2. **Stronger distillation with early checkpoints.** Train 50/100/200 examples,
-   save every 50, and try KL weights 20-100. V3 KL-5 was close but still moved
-   the distribution. Do not commit to 500/full epochs before evaluating early
-   checkpoints.
-3. **Explicit confidence/ranking supervision.** Anchor CE does not directly
-   teach the selected anchor's confidence to outrank confidently wrong
-   positions. Add a margin that ranks the correct anchor above incorrect top-1
-   candidates, while not suppressing positions whose top-1 token is already
-   gold-correct.
-4. **Threshold calibration sweep.** Compare base and trained at identical
-   thresholds such as 0.90, 0.95, 0.99. Fine-tuning changes calibration, so a
-   fixed 0.95 is not automatically comparable. Report the accuracy/forward
-   Pareto frontier, not a cherry-picked single threshold.
-5. **Use current-model top-two mistakes plus cached causal targets carefully.**
-   V2/V3 dynamically train current top-two positions, including mistakes. The
-   cached correct >=0.95 positions can be added as low-weight positive targets
-   if the goal is to increase burst density rather than only repair mistakes.
-6. **Numeric span handling.** For any future numeric catalysts, never place one
-   isolated digit. Either ban numeric catalysts, as current text-only targets
-   do, or treat a full contiguous number as one grouped action.
-7. **Only after a smoke win:** train all 7,473 examples, evaluate all 1,319 test
-   examples, then repeat on LM1B with likelihood/perplexity-style quality and
-   decoding forward count.
+1. **Improve anchor selection.** This is the highest-value direction by a wide
+   margin, because anchor quality is the largest measured effect: informative
+   versus uninformative anchors is worth 2.089 versus 0.850 unlocked positions
+   per forward and 14 points of accuracy. The current selector is a one-line
+   heuristic (`text.strip().isalpha()`, most confident such token). Anything
+   better goes straight to the bottom line. Round 4 tests cheap heuristics
+   (minimum token length; restricting to below-threshold candidates). The
+   principled version is to **learn** an anchor selector, which is the
+   project's original idea and now has a decoder that rewards it.
+2. **Settle why content anchors work.** Semantics or novelty? A content word may
+   help because it is informative, or merely because it is a token the
+   threshold would not have committed anyway -- the global argmax almost always
+   would be. `--catalyst-filter below` separates these. The answer changes how
+   a learned selector should be trained.
+3. **Finish the full benchmark**, including the semi-autoregressive block
+   baseline at a matched forward budget. Absolute accuracies at completion
+   length 128 are not comparable to published LLaDA numbers; the comparison
+   between arms is what carries.
+4. **Then reconsider training.** V4's promote objective is aimed at the right
+   quantity (positions crossing the threshold) but V4a moved gold probability
+   without moving any commit decision. V4b loosens the throttles. If the
+   learned-anchor-selector route from item 1 looks better, prefer it: it
+   attacks the larger effect.
+
+Still valid from the original list, and not superseded:
+
+- **Numeric span handling.** Never place one isolated digit as an anchor.
+  Either ban numeric anchors, as the current text-only filter does, or treat a
+  contiguous number as one grouped action. Section 8c shows numeric damage is
+  how V3 actually lost.
+- **Threshold sweeps rather than a fixed threshold**, since fine-tuning moves
+  calibration. Now standard in `run_pareto_benchmark.sh` and the full
+  benchmark.
+- **LM1B after GSM8K**, with likelihood-style quality against forward count.
 
 ## 11b. V4: Training for Parallel Decodability
 
@@ -1128,13 +1140,38 @@ installed inside it.
 
 ## 15. Final Research Takeaway
 
-The empirical anchor phenomenon is real: a few carefully chosen gold anchors
-can raise GSM8K accuracy by about 14 percentage points. The failure is turning
-that cheating oracle into a learned decoder without damaging the base model.
+The empirical anchor phenomenon is real, and it does not need a cheating
+oracle. The original experiment showed that a few *gold* anchors raise GSM8K
+accuracy by about 14 points. The decoder sweep shows that anchors the base
+model picks for itself, with a one-line heuristic and no training, are worth
+about the same: 72% versus 58% against an uninformative anchor, and 2.089
+versus 0.850 unlocked positions per forward.
 
-The strongest implementation lesson so far is that anchor CE alone does not
-train causal unlocking, while unconstrained post-anchor CE changes confidence
-calibration and harms both quality and latency. KL preservation largely closes
-the quality gap, suggesting the next useful direction is a gated or much more
-strongly distilled post-anchor adapter rather than more epochs of the existing
-global LoRA objective.
+So the project spent months trying to *learn* what turned out to be available
+for free, while the machinery built to exploit it -- a second model forward to
+collect the unlocked tokens -- was actively making things worse. Removing that
+forward is a 2.5x reduction in model forwards against the baseline every
+training run was scored against, at higher accuracy, with no training at all.
+
+Three lessons worth carrying beyond this project:
+
+1. **Measure the baseline under every knob you added for the trained model.**
+   The burst cap existed to stop a trained model corrupting the canvas. It also
+   halved the baseline's throughput, and nobody re-measured. Every
+   quality/latency comparison for two model generations was against a
+   handicapped reference.
+2. **"Differs from gold" is not "wrong".** V2 and V3 applied cross-entropy at
+   positions where the model confidently preferred its own valid phrasing to
+   the gold rationale's wording. Gold probability there was about 2.7%. That
+   objective taught the model to abandon coherent generation, and it is the
+   whole explanation for 44% and 64%.
+3. **Ablate the parts you think are incidental.** The alphabetic anchor filter
+   was inherited from the target-cache design and looked like a detail. It
+   turned out to be the largest single effect measured here. The dedicated
+   unlock forward looked like the core mechanism, and was negative.
+
+The most promising direction left is the project's original one, now with a
+decoder that rewards it: **learn a better anchor selector**. Anchor quality is
+the dominant lever, the current selector is a one-line heuristic, and nothing
+about the earlier failures argues against learning selection -- they argue
+against the transition objective that was wrapped around it.
