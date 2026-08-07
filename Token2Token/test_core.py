@@ -47,6 +47,7 @@ from Token2Token.train_anchor_transition import (
     masked_kl_loss,
     post_anchor_topk_positions,
 )
+from Token2Token.commit_phase_analysis import analyse as analyse_commit_phases
 from Token2Token.paired_comparison import compare, mcnemar_p_value
 from Token2Token.train_parallel_unlock import (
     bucket_positions,
@@ -839,6 +840,25 @@ class CoreTests(unittest.TestCase):
             float(masked_kl_loss(changed, teacher, [0, 7, 0], 0)),
             0.0,
         )
+
+    def test_commit_phase_analysis_contrasts_correct_and_wrong(self):
+        rows = [
+            {"correct": True, "commit_phase": [1, 1, 3, 3]},
+            {"correct": True, "commit_phase": [1, 3, 3, 3]},
+            {"correct": False, "commit_phase": [4, 4, 4, 1]},
+            {"correct": False, "commit_phase": [4, 4, 1, 1]},
+        ]
+        report = analyse_commit_phases(rows)
+        self.assertEqual(report["examples"], 4)
+        self.assertEqual(report["correct"], 2)
+        unlock = next(
+            item
+            for item in report["comparisons"]
+            if item["phase"] == "post-anchor unlock"
+        )
+        self.assertEqual(unlock["correct_share"], 0.0)
+        self.assertGreater(unlock["wrong_share"], 0.0)
+        self.assertGreater(unlock["difference"], 0.0)
 
     def test_mcnemar_uses_only_discordant_pairs(self):
         self.assertEqual(mcnemar_p_value(0, 0), 1.0)
