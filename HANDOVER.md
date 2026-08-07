@@ -475,10 +475,13 @@ This also explains the k-sweep in section 2, where greedy-IG accuracy peaks
 around k=2 and then declines: the same error-amplification, driven there by
 gold anchors placed too deep into the completion.
 
-### The two differing examples say exactly what the unlock forward commits
+### What changes in the two examples that flip, and what that does not prove
 
-Only two of the 50 questions decode differently, and both diverge on a single
-arithmetic token, in both cases the *result of a multiplication*:
+Be careful with this section. **30 of the 50 questions produce different
+completions**; the two decoders routinely take different paths through the same
+reasoning. Only **two** change correctness, both in single-forward's favour.
+In both of those, the two-forward decoder ends up with a wrong arithmetic
+result:
 
 - Example 9, gold 460. Two-forward writes `$10 x1.2 = $16 per hour`, then
   `$16 x 5 = $80`, and answers 480. Single-forward writes `$10 x 1.2 = $12`,
@@ -486,17 +489,29 @@ arithmetic token, in both cases the *result of a multiplication*:
 - Example 39, gold 18. Two-forward writes `3*2 = 12 miles per hour` and answers
   36. Single-forward writes `3 * 2 = 6 miles per hour` and answers 18.
 
-A product position is precisely a position that only becomes confident once its
-operands are on the canvas. That is exactly the class of token the unlock
-forward exists to capture, and it is the class it gets wrong. Committing a
-dependent token in the same cycle as the dependency it was waiting on means
-the model never re-examines it against the rest of the completion; its
-confidence comes from the local operands alone. Deferring it by one cycle,
-which is all single-forward does, lets more of the completion settle first and
-the arithmetic comes out right.
+The tempting story is that these are *dependent* tokens: a product only becomes
+confident once its operands are on the canvas, which is exactly the class the
+unlock forward exists to harvest, so the unlock forward commits it prematurely
+and the error propagates.
 
-The practical rule: **high confidence created by the token you just committed
-is not independent evidence.** Do not spend a forward harvesting it.
+**That story is consistent with the evidence but is not established by it.**
+`Token2Token/divergence_analysis.py` finds that in both examples the
+completions first diverge *earlier* than the arithmetic, on ordinary prose or
+even whitespace (`run at 3*2` versus `run at 3 * 2`). So the wrong product may
+be a downstream consequence of an earlier divergence rather than a
+mis-timed unlock commit, and two examples cannot separate the two.
+
+To actually test it, the decoder needs to record which phase committed each
+position, so a wrong token can be attributed to a catalyst commit, a
+first-forward threshold commit, or an unlock commit. That instrumentation does
+not exist yet and is the concrete next step for this claim. The full
+1,319-example run will also supply far more than two flipped examples to
+categorise.
+
+What the evidence does support without qualification is the aggregate result:
+one forward per cycle is both cheaper and no worse, so **do not spend a second
+forward harvesting confidence that the token you just committed created**.
+Whether the mechanism is error amplification specifically remains open.
 
 Report: `outputs/token2token/decoder_sweep/base50/paired_single_vs_two.md`.
 
