@@ -37,6 +37,18 @@ evaluate() {
 
 evaluate base_single_forward $SINGLE
 
+# The two-forward arm already exists at full scale under an identical config
+# (threshold 0.95, 128 tokens, uncapped burst, no adapter), so pair against it
+# rather than spending another 1319 decodes.
+TWO_FORWARD="outputs/token2token/threshold_unlock/eval_gsm8k_t095_text_q07_anchor_ltr_1epoch/base/predictions_t0p95.jsonl"
+if [[ -f "$TWO_FORWARD" ]]; then
+  python3 -m Token2Token.paired_comparison \
+    --baseline-predictions "$TWO_FORWARD" \
+    --trained-predictions "$ROOT/base_single_forward/predictions_t0p95.jsonl" \
+    --baseline-label two_forward --trained-label single_forward \
+    --output "$ROOT/paired_single_vs_two_full.md"
+fi
+
 if [[ -n "${ADAPTER_PATH:-}" ]]; then
   evaluate trained_single_forward $SINGLE --adapter-path "$ADAPTER_PATH"
   python3 -m Token2Token.paired_comparison \
