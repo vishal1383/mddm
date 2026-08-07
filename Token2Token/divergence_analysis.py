@@ -53,6 +53,7 @@ def load_rows(path: Path):
 def analyse(baseline, trained, baseline_label, trained_label):
     categories = Counter()
     outcomes = Counter()
+    numeric_divergence = Counter()
     samples = []
     for base_row, trained_row in zip(baseline, trained):
         base_text = base_row["decoded_completion"]
@@ -60,7 +61,15 @@ def analyse(baseline, trained, baseline_label, trained_label):
         if base_text == trained_text:
             continue
         index = first_difference(base_text, trained_text)
+        number_index, base_number, trained_number = first_number_difference(
+            base_text, trained_text
+        )
         category = classify(base_text[:index])
+        numeric_divergence[
+            "same numbers, prose only"
+            if number_index is None
+            else "numbers differ"
+        ] += 1
         outcome = (
             "trained_only_correct"
             if trained_row["correct"] and not base_row["correct"]
@@ -79,6 +88,11 @@ def analyse(baseline, trained, baseline_label, trained_label):
                     "context": base_text[max(0, index - 60) : index],
                     "baseline_next": base_text[index : index + 24],
                     "trained_next": trained_text[index : index + 24],
+                    "first_number_diff": (
+                        None
+                        if number_index is None
+                        else f"#{number_index}: {base_number} -> {trained_number}"
+                    ),
                 }
             )
     return {
@@ -86,6 +100,7 @@ def analyse(baseline, trained, baseline_label, trained_label):
         "diverged": sum(outcomes.values()),
         "outcomes": outcomes,
         "categories": categories,
+        "numeric_divergence": numeric_divergence,
         "samples": samples,
     }
 
@@ -96,6 +111,27 @@ def first_difference(left, right):
         if left[index] != right[index]:
             return index
     return limit
+
+
+NUMBER = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+
+
+def first_number_difference(left, right):
+    """First position in the numeric sequence where the two disagree.
+
+    A character diff fires on whitespace ("3*2" versus "3 * 2"), which says
+    nothing about the reasoning. The numbers a completion produces are what
+    determine the answer, so comparing those isolates arithmetic divergence
+    from formatting.
+    """
+    left_numbers = [match.group(0) for match in NUMBER.finditer(left)]
+    right_numbers = [match.group(0) for match in NUMBER.finditer(right)]
+    for index, (a, b) in enumerate(zip(left_numbers, right_numbers)):
+        if a.replace(",", "") != b.replace(",", ""):
+            return index, a, b
+    if len(left_numbers) != len(right_numbers):
+        return min(len(left_numbers), len(right_numbers)), None, None
+    return None, None, None
 
 
 def classify(prefix):
@@ -122,6 +158,15 @@ def render_markdown(report, baseline_label, trained_label):
         lines.append(f"| {outcome} | {count} |")
     lines += [
         "",
+        "## Numeric sequence agreement among diverged completions",
+        "",
+        "| Numbers | Count |",
+        "|---|---:|",
+    ]
+    for label, count in report["numeric_divergence"].most_common():
+        lines.append(f"| {label} | {count} |")
+    lines += [
+        "",
         "## First differing token, by kind and outcome",
         "",
         "| Token kind | Outcome | Count |",
@@ -138,6 +183,7 @@ def render_markdown(report, baseline_label, trained_label):
                 f"  - context: `...{sample['context']}`",
                 f"  - {baseline_label}: `{sample['baseline_next']}`",
                 f"  - {trained_label}: `{sample['trained_next']}`",
+                f"  - first differing number: {sample['first_number_diff']}",
             ]
     return "\n".join(lines) + "\n"
 
