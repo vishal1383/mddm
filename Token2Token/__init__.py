@@ -1,1 +1,1 @@
-"""Minimal standalone V1 for IG-ordered anchor supervision."""
+"""Anchor-lookahead training and decoding experiments for LLaDA."""

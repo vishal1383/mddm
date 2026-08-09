@@ -70,28 +70,28 @@ all text predictions at or above `0.90` and numeric predictions at or above
 
 | Stage | File |
 | --- | --- |
-| Cache generation | `precompute_threshold_unlock_targets.py` |
-| Shared catalyst selection | `decode_policy.py` |
-| Lookahead trainer | `train_online_lookahead.py` |
-| Losses and metrics | `train_lookahead_distillation.py` |
-| Matched decoder and evaluation | `eval_threshold_gsm8k.py` |
-| Cache command | `run_anchor_lookahead_cache.sh` |
-| Exact step-6,000 training command | `run_anchor_lookahead_train.sh` |
-| Matched base-versus-trained evaluation | `run_anchor_lookahead_eval.sh` |
-| Unit tests | `test_core.py` |
+| Cache generation | `main/precompute_threshold_unlock_targets.py` |
+| Shared catalyst selection | `main/decode_policy.py` |
+| Lookahead trainer | `main/train_online_lookahead.py` |
+| Losses and metrics | `main/train_lookahead_distillation.py` |
+| Matched decoder and evaluation | `main/eval_threshold_gsm8k.py` |
+| Cache command | `scripts/run_anchor_lookahead_cache.sh` |
+| Exact step-6,000 training command | `scripts/run_anchor_lookahead_train.sh` |
+| Matched base-versus-trained evaluation | `scripts/run_anchor_lookahead_eval.sh` |
+| Unit tests | `tests/test_core.py` |
 
 ## Reproduce
 
 Run from the repository root inside the project container:
 
 ```bash
-bash Token2Token/run_anchor_lookahead_cache.sh
-bash Token2Token/run_anchor_lookahead_train.sh
-bash Token2Token/run_anchor_lookahead_eval.sh
+bash Token2Token/scripts/run_anchor_lookahead_cache.sh
+bash Token2Token/scripts/run_anchor_lookahead_train.sh
+bash Token2Token/scripts/run_anchor_lookahead_eval.sh
 ```
 
 The cache and model outputs default to `outputs/token2token/anchor_lookahead/`.
 Each script exposes its paths and scale through environment variables at the
 top of the file. The original search-and-selection runner remains available as
-`run_threshold_lookahead_overnight.sh`, but it is an experiment driver rather
-than the canonical final command.
+`experiments/scripts/run_threshold_lookahead_overnight.sh`, but it is an
+experiment driver rather than the canonical final command.

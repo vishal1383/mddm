@@ -25,7 +25,7 @@ Last updated: 2026-08-07 (third pass: held-out lookahead and adaptive decode)
   condition never goes false. Three such waiters were queued and silently
   never fired. Wait on explicit PIDs instead, as the chain scripts do.
 - The reproducible command and current result table are in
-  `Token2Token/RESULTS.md` and `Token2Token/run_adaptive_validation.sh`.
+  `Token2Token/experiments/docs/RESULTS.md` and `Token2Token/experiments/scripts/run_adaptive_validation.sh`.
 
 The working tree contains unrelated generated `__pycache__` changes, report
 outputs, and `PapersMisc/RecentMDDMpaper.pdf`. Do not revert or stage these by
@@ -680,7 +680,7 @@ unlock forward exists to harvest, so the unlock forward commits it prematurely
 and the error propagates.
 
 **That story is consistent with the evidence but is not established by it.**
-`Token2Token/divergence_analysis.py` finds that in both examples the
+`Token2Token/experiments/divergence_analysis.py` finds that in both examples the
 completions first diverge *earlier* than the arithmetic, on ordinary prose or
 even whitespace (`run at 3*2` versus `run at 3 * 2`). So the wrong product may
 be a downstream consequence of an earlier divergence rather than a
@@ -915,7 +915,7 @@ Two process notes on this sweep, both worth carrying:
   showed 44% and looked like a collapse; it finished at 62%. Every intermediate
   reading here was misleading in one direction or the other.
 - A round-3 script extending the curve to 0.70/0.60/0.50 was written when 0.90
-  looked like a free win (`Token2Token/run_decoder_sweep50_round3.sh`). It is
+  looked like a free win (`Token2Token/experiments/scripts/run_decoder_sweep50_round3.sh`). It is
   queued at the end of the work rather than dropped: the thresholds are cheap
   (fewer forwards per example) and they complete the frontier, but nothing
   down there is expected to be a usable operating point.
@@ -991,7 +991,7 @@ Two cautions on how to read any candidate against that bar:
    speed (or the reverse) purely through calibration drift and look like a win.
    The honest question is whether the trained accuracy/tokens-per-forward
    frontier sits above the base frontier across thresholds. Compare curves, not
-   points: `Token2Token/run_pareto_benchmark.sh` sweeps 0.99/0.95/0.90/0.80 for
+   points: `Token2Token/experiments/scripts/run_pareto_benchmark.sh` sweeps 0.99/0.95/0.90/0.80 for
    both models under one decoder.
 
 The ordinary fixed-`k` confidence baseline is now measurable through the same
@@ -1064,7 +1064,7 @@ Still valid from the original list, and not superseded:
 
 ## 11b. V4: Training for Parallel Decodability
 
-`Token2Token/train_parallel_unlock.py` replaces the anchor-transition
+`Token2Token/experiments/train_parallel_unlock.py` replaces the anchor-transition
 objective. The reasoning is section 8b: the threshold burst places 75% of all
 tokens, so tokens/forward is set by how many positions clear the threshold at
 once, not by catalyst choice. So supervise that directly.
@@ -1097,7 +1097,7 @@ Canvases are replayed from the cached threshold-gain trajectory, so they match
 the partially-filled states the decoder actually visits rather than
 random-mask denoising states.
 
-Runner: `Token2Token/run_parallel_unlock_v4.sh`, fully environment-driven.
+Runner: `Token2Token/experiments/scripts/run_parallel_unlock_v4.sh`, fully environment-driven.
 
 ### V4a result: the objective works, the settings are too conservative
 
@@ -1161,8 +1161,8 @@ So V4 held the wrong axis fixed. It swept the objective and froze the
 threshold, when the two have to be co-designed.
 
 **V5 trains and decodes at a matched threshold.**
-`Token2Token/run_threshold_matched_v5.sh`, swept by
-`Token2Token/chain_v5_sweep.sh`.
+`Token2Token/experiments/scripts/run_threshold_matched_v5.sh`, swept by
+`Token2Token/experiments/scripts/chain_v5_sweep.sh`.
 
 The reasoning:
 
@@ -1201,7 +1201,7 @@ the comparisons between them are valid; the absolute level is not a claim.
 
 ## 11c. New Decoder Knobs
 
-All in `Token2Token/eval_threshold_gsm8k.py`; every default reproduces the
+All in `Token2Token/main/eval_threshold_gsm8k.py`; every default reproduces the
 previous behaviour exactly, so older scripts still replay.
 
 - `--commit-threshold-on-first-forward` — the catalyst/cleanup forward also
@@ -1222,30 +1222,30 @@ previous behaviour exactly, so older scripts still replay.
 ## 12. Key Source Files
 
 - `Token2Token/README.md`: runnable overview
-- `Token2Token/train.py`: model loading, LoRA setup, compatibility patches
-- `Token2Token/core.py`: original anchor/position losses
-- `Token2Token/precompute_anchor_targets.py`: frozen IG targets
-- `Token2Token/precompute_rollout_targets.py`: rollout selector
-- `Token2Token/precompute_local_unlock_targets.py`: local unlock selector
-- `Token2Token/precompute_threshold_unlock_targets.py`: current target cache
-- `Token2Token/train_anchor_order.py`: frozen anchor-order trainer
-- `Token2Token/train_threshold_unlock.py`: strict threshold/LTR trainer
-- `Token2Token/train_anchor_transition.py`: V2/V3 transition trainer
-- `Token2Token/decode.py`: single-example confidence/catalyst decoders
-- `Token2Token/eval_gsm8k.py`: fixed-k GSM8K evaluation
-- `Token2Token/eval_threshold_gsm8k.py`: batched catalyst/threshold evaluation
-- `Token2Token/summarize_threshold_comparison.py`: quality/latency comparison
-- `Token2Token/test_core.py`: 39 tests at last run
-- `Token2Token/train_parallel_unlock.py`: V4 promote/repair/preserve trainer
-- `Token2Token/summarize_decoder_sweep.py`: accuracy/latency table with a
+- `Token2Token/main/train.py`: model loading, LoRA setup, compatibility patches
+- `Token2Token/main/core.py`: original anchor/position losses
+- `Token2Token/main/precompute_anchor_targets.py`: frozen IG targets
+- `Token2Token/experiments/precompute_rollout_targets.py`: rollout selector
+- `Token2Token/experiments/precompute_local_unlock_targets.py`: local unlock selector
+- `Token2Token/main/precompute_threshold_unlock_targets.py`: current target cache
+- `Token2Token/experiments/train_anchor_order.py`: frozen anchor-order trainer
+- `Token2Token/main/train_threshold_unlock.py`: strict threshold/LTR trainer
+- `Token2Token/main/train_anchor_transition.py`: V2/V3 transition trainer
+- `Token2Token/experiments/decode.py`: single-example confidence/catalyst decoders
+- `Token2Token/main/eval_gsm8k.py`: fixed-k GSM8K evaluation
+- `Token2Token/main/eval_threshold_gsm8k.py`: batched catalyst/threshold evaluation
+- `Token2Token/experiments/summarize_threshold_comparison.py`: quality/latency comparison
+- `Token2Token/tests/test_core.py`: 39 tests at last run
+- `Token2Token/experiments/train_parallel_unlock.py`: V4 promote/repair/preserve trainer
+- `Token2Token/experiments/summarize_decoder_sweep.py`: accuracy/latency table with a
   Pareto column
-- `Token2Token/test_core.py`: 50 tests at last run
-- `Token2Token/run_anchor_transition_v2.sh`
-- `Token2Token/run_anchor_transition_v2_eval50.sh`
-- `Token2Token/run_anchor_transition_v3_kl.sh`
-- `Token2Token/run_decoder_sweep50.sh`: base decoder frontier, no training
-- `Token2Token/run_parallel_unlock_v4.sh`: one V4 config, train then evaluate
-- `Token2Token/run_pareto_benchmark.sh`: threshold sweep for base and trained
+- `Token2Token/tests/test_core.py`: 50 tests at last run
+- `Token2Token/experiments/scripts/run_anchor_transition_v2.sh`
+- `Token2Token/experiments/scripts/run_anchor_transition_v2_eval50.sh`
+- `Token2Token/experiments/scripts/run_anchor_transition_v3_kl.sh`
+- `Token2Token/experiments/scripts/run_decoder_sweep50.sh`: base decoder frontier, no training
+- `Token2Token/experiments/scripts/run_parallel_unlock_v4.sh`: one V4 config, train then evaluate
+- `Token2Token/experiments/scripts/run_pareto_benchmark.sh`: threshold sweep for base and trained
 
 ## 13. Git History Landmarks
 

@@ -690,7 +690,7 @@ completion to accommodate it.
 - Current adaptive report: `Token2Token/artifacts/threshold_lookahead_v7/full_train7473_t090_num099/FINAL_REPORT.md`
 - Current adaptive predictions: `Token2Token/artifacts/threshold_lookahead_v7/full_train7473_t090_num099/full_test_1319/`
 - Fixed-k full results: `Token2Token/results/full_k123_1319_raw/`
-- Exact fixed-k method notes: `Token2Token/LOOKAHEAD_SELECTION_EXPERIMENT.md`
+- Exact fixed-k method notes: `Token2Token/experiments/docs/LOOKAHEAD_SELECTION_EXPERIMENT.md`
 - Original IG intervention report: `outputs/decode_impact_all/llada-8b_gsm8k/decode_impact_report.md`
 - Training configuration and log: `Token2Token/artifacts/threshold_lookahead_v7/full_train7473_t090_num099/train/`
-- Research chronology: `Token2Token/RESEARCH_LOG.md`
+- Research chronology: `Token2Token/experiments/docs/RESEARCH_LOG.md`
