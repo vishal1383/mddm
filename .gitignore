@@ -1,0 +1,21 @@
+# Python bytecode and local environments
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local agent/document work
+.codex-docs-work/
+
+# Runtime output and model weights
+outputs/
+outputs_*/
+*.log
+*.safetensors
+*.pt
+*.pth
+
+# Large Token2Token run directories. Curated summaries already tracked in Git
+# remain tracked; add any new summary explicitly with `git add -f`.
+Token2Token/artifacts/
+Token2Token/results/*_raw/
+Token2Token/claude_parallel/
