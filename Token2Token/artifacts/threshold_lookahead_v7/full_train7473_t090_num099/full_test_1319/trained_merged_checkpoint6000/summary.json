@@ -1,0 +1,33 @@
+[
+  {
+    "model_label": "threshold_lookahead_checkpoint6000_merged_full",
+    "model_id": "GSAI-ML/LLaDA-8B-Instruct",
+    "adapter_path": "outputs/token2token/threshold_lookahead_v7/full_train7473_t090_num099/train/checkpoint-006000",
+    "adapter_merged": true,
+    "dataset_split": "test",
+    "start_index": 0,
+    "confidence_threshold": 0.9,
+    "numeric_threshold": 0.99,
+    "examples": 1319,
+    "correct": 926,
+    "accuracy": 0.7020470053070508,
+    "completion_length": 128,
+    "total_model_forwards": 23299,
+    "tokens_per_forward": 7.246319584531525,
+    "mean_threshold_tokens": 103.78316906747536,
+    "max_threshold_tokens": null,
+    "decoder": "catalyst",
+    "tokens_per_step": 1,
+    "block_length": null,
+    "commit_threshold_on_first_forward": true,
+    "unlock_forward": false,
+    "catalyst_tokens_per_forward": 2,
+    "catalyst_additional_min_confidence": 0.6,
+    "catalyst_additional_min_ratio": 0.85,
+    "adapter_scope": "all",
+    "catalyst_filter": "text-below",
+    "catalyst_min_length": 0,
+    "force_catalyst": "always",
+    "elapsed_seconds": 5079.563271284103
+  }
+]

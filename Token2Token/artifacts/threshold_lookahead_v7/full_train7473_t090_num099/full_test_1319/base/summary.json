@@ -1,0 +1,32 @@
+[
+  {
+    "model_label": "base_adaptive_medium_full",
+    "model_id": "GSAI-ML/LLaDA-8B-Instruct",
+    "adapter_path": null,
+    "dataset_split": "test",
+    "start_index": 0,
+    "confidence_threshold": 0.9,
+    "numeric_threshold": 0.99,
+    "examples": 1319,
+    "correct": 908,
+    "accuracy": 0.6884003032600455,
+    "completion_length": 128,
+    "total_model_forwards": 30985,
+    "tokens_per_forward": 5.448830079070518,
+    "mean_threshold_tokens": 98.17058377558757,
+    "max_threshold_tokens": null,
+    "decoder": "catalyst",
+    "tokens_per_step": 1,
+    "block_length": null,
+    "commit_threshold_on_first_forward": true,
+    "unlock_forward": false,
+    "catalyst_tokens_per_forward": 2,
+    "catalyst_additional_min_confidence": 0.6,
+    "catalyst_additional_min_ratio": 0.85,
+    "adapter_scope": "all",
+    "catalyst_filter": "text-below",
+    "catalyst_min_length": 0,
+    "force_catalyst": "always",
+    "elapsed_seconds": 6276.569324731827
+  }
+]

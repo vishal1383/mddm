@@ -11,7 +11,12 @@ import time
 
 import torch
 
-from Token2Token.eval_threshold_gsm8k import current_block
+from Token2Token.decode_policy import joint_topk_catalyst_mask
+from Token2Token.eval_threshold_gsm8k import (
+    allowed_prediction_mask,
+    current_block,
+    threshold_selection_mask,
+)
 from Token2Token.train import MODEL_ID, load_model, save_adapter
 from Token2Token.train_anchor_transition import anchor_transitions, read_records
 from Token2Token.train_lookahead_distillation import (
@@ -61,15 +66,28 @@ def main() -> None:
         was_training = model.training
         model.eval()
         with torch.no_grad(), model.disable_adapter(), autocast(device, args.bf16):
-            stages, teacher_logits = teacher_lookahead_stages(
-                model,
-                prompt_ids,
-                canvases,
-                mask_token_id,
-                args.block_length,
-                args.lookahead,
-                device,
-            )
+            if args.teacher_policy == "threshold-catalyst":
+                stages, teacher_logits = threshold_teacher_lookahead_stages(
+                    model,
+                    tokenizer,
+                    prompt_ids,
+                    canvases,
+                    mask_token_id,
+                    args.lookahead,
+                    args.confidence_threshold,
+                    args.numeric_threshold,
+                    device,
+                )
+            else:
+                stages, teacher_logits = teacher_lookahead_stages(
+                    model,
+                    prompt_ids,
+                    canvases,
+                    mask_token_id,
+                    args.block_length,
+                    args.lookahead,
+                    device,
+                )
         if was_training:
             model.train()
 
@@ -198,6 +216,87 @@ def teacher_lookahead_stages(
     return stages, initial_logits
 
 
+def threshold_teacher_lookahead_stages(
+    model,
+    tokenizer,
+    prompt_ids,
+    canvases,
+    mask_token_id,
+    lookahead,
+    confidence_threshold,
+    numeric_threshold,
+    device,
+):
+    """Distil consecutive actions of the deployed top-one catalyst decoder."""
+    working = [list(map(int, canvas)) for canvas in canvases]
+    targets = [[] for _ in working]
+    initial_logits = None
+    allowed_cache = {}
+    numeric_cache = {}
+    for _ in range(lookahead):
+        logits = batched_completion_logits(model, prompt_ids, working, device)
+        if initial_logits is None:
+            initial_logits = logits.detach()
+        rows = logits.float().clone()
+        rows[:, :, int(mask_token_id)] = -torch.inf
+        probabilities = torch.softmax(rows, dim=-1)
+        confidence, prediction = probabilities.max(dim=-1)
+        masked = torch.tensor(
+            [
+                [int(token_id) == int(mask_token_id) for token_id in canvas]
+                for canvas in working
+            ],
+            device=logits.device,
+            dtype=torch.bool,
+        )
+        active = masked.any(dim=1)
+        allowed = allowed_prediction_mask(
+            prediction,
+            masked,
+            tokenizer,
+            allowed_cache,
+            catalyst_filter="text",
+            min_length=0,
+        )
+        allowed &= confidence.lt(confidence_threshold)
+        has_catalyst = allowed.any(dim=1) & active
+        chosen = joint_topk_catalyst_mask(confidence, allowed, 1)
+        chosen &= has_catalyst.unsqueeze(1)
+        cleanup = active & ~has_catalyst
+        leftmost = torch.zeros_like(masked)
+        leftmost.scatter_(1, masked.long().argmax(dim=1, keepdim=True), True)
+        chosen |= leftmost & cleanup.unsqueeze(1)
+
+        burst_eligible = masked & ~chosen
+        burst = threshold_selection_mask(
+            burst_eligible,
+            confidence,
+            prediction,
+            confidence_threshold,
+            numeric_threshold,
+            tokenizer,
+            numeric_cache,
+        )
+        for row_index in range(len(working)):
+            if not bool(active[row_index]):
+                continue
+            position = int(chosen[row_index].long().argmax())
+            token_id = int(prediction[row_index, position])
+            targets[row_index].append(
+                {"position": position, "token_id": token_id}
+            )
+            working[row_index][position] = token_id
+            for burst_position in burst[row_index].nonzero(as_tuple=False).flatten():
+                index = int(burst_position)
+                working[row_index][index] = int(prediction[row_index, index])
+
+    stages = [
+        {"canvas": list(canvas), "targets": row_targets}
+        for canvas, row_targets in zip(canvases, targets)
+    ]
+    return stages, initial_logits
+
+
 def teacher_actions(logits, canvases, mask_token_id, block_length):
     rows = logits.float().clone()
     rows[:, :, int(mask_token_id)] = -torch.inf
@@ -237,6 +336,13 @@ def parse_args():
     parser.add_argument("--completion-length", type=int, default=128)
     parser.add_argument("--block-length", type=int, default=32)
     parser.add_argument("--lookahead", type=int, default=2)
+    parser.add_argument(
+        "--teacher-policy",
+        choices=("block-k1", "threshold-catalyst"),
+        default="block-k1",
+    )
+    parser.add_argument("--confidence-threshold", type=float, default=0.9)
+    parser.add_argument("--numeric-threshold", type=float, default=0.99)
     parser.add_argument("--states-per-example", type=int, default=4)
     parser.add_argument("--max-unlock-tokens", type=int, default=2)
     parser.add_argument("--transition-loss-weight", type=float, default=1.0)
@@ -268,6 +374,12 @@ def parse_args():
         parser.error("counts and lengths must be positive")
     if args.lookahead < 2:
         parser.error("lookahead must be at least 2")
+    if not 0 < args.confidence_threshold < 1:
+        parser.error("confidence-threshold must be in (0, 1)")
+    if not args.confidence_threshold <= args.numeric_threshold < 1:
+        parser.error(
+            "numeric-threshold must be in [confidence-threshold, 1)"
+        )
     if min(
         args.transition_loss_weight,
         args.selection_loss_weight,

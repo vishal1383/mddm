@@ -8,6 +8,16 @@ additional predictions from the same forward only when their confidence is at
 least 0.99. See [RESULTS.md](RESULTS.md) for the tuning/held-out split, controls,
 negative LoRA result, and exact numbers.
 
+The later trained fixed-`k=2` candidate is documented separately in
+[LOOKAHEAD_SELECTION_EXPERIMENT.md](LOOKAHEAD_SELECTION_EXPERIMENT.md), including
+its frozen-teacher targets, exact losses, evaluation order, and distinction
+from V4a and the adaptive 0.99 decoder.
+
+The all-unlocked adaptive extension is documented in
+[ALL_UNLOCKED_V1.md](ALL_UNLOCKED_V1.md). It trains on each cached catalyst plus
+its complete `U_after` set and decodes with a matched one-forward 0.95 rule
+instead of fixed `k=2`.
+
 Run the matched base/adaptive validation with:
 
 ```bash

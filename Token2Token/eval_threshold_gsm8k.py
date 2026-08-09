@@ -9,6 +9,7 @@ import time
 
 import torch
 
+from Token2Token.decode_policy import joint_topk_catalyst_mask
 from Token2Token.eval_gsm8k import extract_gsm8k_answer, read_jsonl
 from Token2Token.precompute_threshold_unlock_targets import is_allowed_anchor_token
 from Token2Token.train import MODEL_ID, _token_ids, load_base_model
@@ -27,11 +28,13 @@ def main() -> None:
         from peft import PeftModel
 
         model = PeftModel.from_pretrained(model, args.adapter_path).to(device)
+        if args.merge_adapter:
+            model = model.merge_and_unload()
     model.eval()
 
     from datasets import load_dataset
 
-    dataset = load_dataset("openai/gsm8k", "main", split="test")
+    dataset = load_dataset("openai/gsm8k", "main", split=args.dataset_split)
     summary_path = output / "summary.json"
     summaries = (
         json.loads(summary_path.read_text(encoding="utf-8"))
@@ -55,6 +58,8 @@ def main() -> None:
         started = time.time()
         pending = []
         for index, row in enumerate(dataset):
+            if index < args.start_index:
+                continue
             example_id = str(index)
             if example_id in completed:
                 continue
@@ -95,12 +100,19 @@ def main() -> None:
                     args.completion_length,
                     mask_token_id,
                     confidence_threshold=threshold,
+                    numeric_threshold=args.numeric_threshold,
                     max_threshold_tokens=args.max_threshold_tokens,
                     commit_threshold_on_first_forward=(
                         args.commit_threshold_on_first_forward
                     ),
                     unlock_forward=args.unlock_forward,
                     catalyst_tokens_per_forward=args.catalyst_tokens_per_forward,
+                    catalyst_additional_min_confidence=(
+                        args.catalyst_additional_min_confidence
+                    ),
+                    catalyst_additional_min_ratio=(
+                        args.catalyst_additional_min_ratio
+                    ),
                     base_first_forward=(args.adapter_scope == "unlock"),
                     catalyst_filter=args.catalyst_filter,
                     catalyst_min_length=args.catalyst_min_length,
@@ -125,6 +137,14 @@ def main() -> None:
                 result = {
                     "model_label": args.model_label,
                     "confidence_threshold": threshold,
+                    "numeric_threshold": args.numeric_threshold,
+                    "adapter_merged": args.merge_adapter,
+                    "catalyst_additional_min_confidence": (
+                        args.catalyst_additional_min_confidence
+                    ),
+                    "catalyst_additional_min_ratio": (
+                        args.catalyst_additional_min_ratio
+                    ),
                     "example_id": example_id,
                     "question": row["question"],
                     "decoded_completion": decoded,
@@ -145,11 +165,16 @@ def main() -> None:
             "model_label": args.model_label,
             "model_id": args.model_id,
             "adapter_path": args.adapter_path,
+            "adapter_merged": args.merge_adapter,
+            "dataset_split": args.dataset_split,
+            "start_index": args.start_index,
             "confidence_threshold": threshold,
+            "numeric_threshold": args.numeric_threshold,
             "examples": evaluated,
             "correct": correct,
             "accuracy": correct / evaluated if evaluated else 0.0,
             "completion_length": args.completion_length,
+            "batch_size": args.batch_size,
             "total_model_forwards": total_forwards,
             "tokens_per_forward": (
                 args.completion_length * evaluated / total_forwards
@@ -168,6 +193,10 @@ def main() -> None:
             ),
             "unlock_forward": args.unlock_forward,
             "catalyst_tokens_per_forward": args.catalyst_tokens_per_forward,
+            "catalyst_additional_min_confidence": (
+                args.catalyst_additional_min_confidence
+            ),
+            "catalyst_additional_min_ratio": args.catalyst_additional_min_ratio,
             "adapter_scope": args.adapter_scope,
             "catalyst_filter": args.catalyst_filter,
             "catalyst_min_length": args.catalyst_min_length,
@@ -194,10 +223,13 @@ def batch_threshold_unlock_decode(
     mask_token_id,
     *,
     confidence_threshold,
+    numeric_threshold=None,
     max_threshold_tokens=None,
     commit_threshold_on_first_forward=False,
     unlock_forward=True,
     catalyst_tokens_per_forward=1,
+    catalyst_additional_min_confidence=0.0,
+    catalyst_additional_min_ratio=0.0,
     base_first_forward=False,
     catalyst_filter="text",
     catalyst_min_length=0,
@@ -210,12 +242,22 @@ def batch_threshold_unlock_decode(
 ):
     if not 0 < confidence_threshold < 1:
         raise ValueError("confidence_threshold must be in (0, 1)")
+    if numeric_threshold is not None and not (
+        confidence_threshold <= numeric_threshold < 1
+    ):
+        raise ValueError(
+            "numeric_threshold must be in [confidence_threshold, 1)"
+        )
     if not unlock_forward and not commit_threshold_on_first_forward:
         raise ValueError(
             "disabling the unlock forward requires first-forward threshold commits"
         )
     if catalyst_tokens_per_forward <= 0:
         raise ValueError("catalyst_tokens_per_forward must be positive")
+    if not 0.0 <= catalyst_additional_min_confidence < 1.0:
+        raise ValueError("catalyst additional minimum confidence must be in [0, 1)")
+    if not 0.0 <= catalyst_additional_min_ratio <= 1.0:
+        raise ValueError("catalyst additional minimum ratio must be in [0, 1]")
     if block_length is not None and block_length <= 0:
         raise ValueError("block_length must be positive")
     if base_first_forward and not unlock_forward:
@@ -248,6 +290,7 @@ def batch_threshold_unlock_decode(
     # 1 catalyst, 2 cleanup, 3 first-forward threshold, 4 unlock threshold.
     commit_phase = torch.zeros_like(canvases)
     allowed_cache = {}
+    numeric_cache = {}
 
     with torch.no_grad():
         while bool(canvases.eq(mask_token_id).any()):
@@ -299,10 +342,13 @@ def batch_threshold_unlock_decode(
                 forcing = active & ~(
                     eligible & confidence.ge(confidence_threshold)
                 ).any(dim=1)
-            scores = confidence.masked_fill(~allowed, -torch.inf)
-            budget = min(int(catalyst_tokens_per_forward), scores.shape[1])
-            chosen = torch.zeros_like(allowed)
-            chosen.scatter_(1, scores.topk(budget, dim=1).indices, True)
+            chosen = joint_topk_catalyst_mask(
+                confidence,
+                allowed,
+                catalyst_tokens_per_forward,
+                additional_min_confidence=catalyst_additional_min_confidence,
+                additional_min_ratio=catalyst_additional_min_ratio,
+            )
             chosen &= allowed & (has_anchor & forcing).unsqueeze(1)
             leftmost = torch.zeros_like(allowed)
             leftmost.scatter_(1, eligible.long().argmax(dim=1, keepdim=True), True)
@@ -316,7 +362,15 @@ def batch_threshold_unlock_decode(
             if commit_threshold_on_first_forward:
                 masked = canvases.eq(mask_token_id)
                 in_block = masked if block_length is None else masked & eligible
-                selected = in_block & confidence.ge(confidence_threshold)
+                selected = threshold_selection_mask(
+                    in_block,
+                    confidence,
+                    token_ids,
+                    confidence_threshold,
+                    numeric_threshold,
+                    tokenizer,
+                    numeric_cache,
+                )
                 selected &= active.unsqueeze(1)
                 selected = limit_threshold_selection(
                     selected, confidence, max_threshold_tokens
@@ -346,7 +400,15 @@ def batch_threshold_unlock_decode(
             )
             forwards[unlock_active] += 1
             in_block = masked if block_length is None else masked & eligible
-            selected = in_block & confidence.ge(confidence_threshold)
+            selected = threshold_selection_mask(
+                in_block,
+                confidence,
+                token_ids,
+                confidence_threshold,
+                numeric_threshold,
+                tokenizer,
+                numeric_cache,
+            )
             selected &= unlock_active.unsqueeze(1)
             selected = limit_threshold_selection(
                 selected, confidence, max_threshold_tokens
@@ -494,6 +556,43 @@ def limit_threshold_selection(selected, confidence, max_threshold_tokens):
     return selected & limited
 
 
+def threshold_selection_mask(
+    eligible,
+    confidence,
+    token_ids,
+    confidence_threshold,
+    numeric_threshold,
+    tokenizer,
+    numeric_cache,
+):
+    selected = eligible & confidence.ge(confidence_threshold)
+    if numeric_threshold is None:
+        return selected
+    numeric = numeric_prediction_mask(
+        token_ids, eligible, tokenizer, numeric_cache
+    )
+    return selected & (~numeric | confidence.ge(numeric_threshold))
+
+
+def numeric_prediction_mask(token_ids, masked, tokenizer, cache):
+    token_rows = token_ids.detach().cpu().tolist()
+    masked_rows = masked.detach().cpu().tolist()
+    numeric = []
+    for row_tokens, row_masked in zip(token_rows, masked_rows):
+        row = []
+        for token_id, is_masked in zip(row_tokens, row_masked):
+            if not is_masked:
+                row.append(False)
+                continue
+            token_id = int(token_id)
+            if token_id not in cache:
+                text = tokenizer.decode([token_id]).strip()
+                cache[token_id] = any(character.isdigit() for character in text)
+            row.append(cache[token_id])
+        numeric.append(row)
+    return torch.tensor(numeric, device=masked.device, dtype=torch.bool)
+
+
 def allowed_prediction_mask(
     token_ids, masked, tokenizer, cache, catalyst_filter="text", min_length=0
 ):
@@ -571,11 +670,17 @@ def parse_args():
         description="Evaluate catalyst plus confidence-threshold decoding on GSM8K"
     )
     parser.add_argument("--adapter-path")
+    parser.add_argument(
+        "--merge-adapter",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
     parser.add_argument("--model-label", required=True)
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--completion-length", type=int, default=128)
     parser.add_argument("--thresholds", default="0.95")
     parser.add_argument("--max-threshold-tokens", type=int)
+    parser.add_argument("--numeric-threshold", type=float)
     parser.add_argument("--decoder", choices=("catalyst", "topk"), default="catalyst")
     parser.add_argument("--tokens-per-step", type=int, default=1)
     parser.add_argument("--block-length", type=int)
@@ -588,6 +693,12 @@ def parse_args():
         "--unlock-forward", action=argparse.BooleanOptionalAction, default=True
     )
     parser.add_argument("--catalyst-tokens-per-forward", type=int, default=1)
+    parser.add_argument(
+        "--catalyst-additional-min-confidence", type=float, default=0.0
+    )
+    parser.add_argument(
+        "--catalyst-additional-min-ratio", type=float, default=0.0
+    )
     parser.add_argument(
         "--catalyst-filter",
         choices=("text", "any", "below", "text-below"),
@@ -606,6 +717,8 @@ def parse_args():
         "--adapter-scope", choices=("all", "unlock"), default="all"
     )
     parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--dataset-split", choices=("train", "test"), default="test")
+    parser.add_argument("--start-index", type=int, default=0)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--device", default="auto")
@@ -613,16 +726,28 @@ def parse_args():
     args = parser.parse_args()
     if args.batch_size <= 0:
         parser.error("batch-size must be positive")
+    if args.start_index < 0:
+        parser.error("start-index must be nonnegative")
     if args.max_threshold_tokens is not None and args.max_threshold_tokens <= 0:
         parser.error("max-threshold-tokens must be positive")
+    if args.numeric_threshold is not None and not 0 < args.numeric_threshold < 1:
+        parser.error("numeric-threshold must be in (0, 1)")
     if args.tokens_per_step <= 0:
         parser.error("tokens-per-step must be positive")
     if args.block_length is not None and args.block_length <= 0:
         parser.error("block-length must be positive")
     if args.catalyst_tokens_per_forward <= 0:
         parser.error("catalyst-tokens-per-forward must be positive")
+    if not 0 <= args.catalyst_additional_min_confidence < 1:
+        parser.error("catalyst-additional-min-confidence must be in [0, 1)")
+    if not 0 <= args.catalyst_additional_min_ratio <= 1:
+        parser.error("catalyst-additional-min-ratio must be in [0, 1]")
     if args.adapter_scope == "unlock" and not args.unlock_forward:
         parser.error("--adapter-scope unlock needs --unlock-forward")
+    if args.merge_adapter and not args.adapter_path:
+        parser.error("--merge-adapter requires --adapter-path")
+    if args.merge_adapter and args.adapter_scope != "all":
+        parser.error("--merge-adapter requires --adapter-scope all")
     if args.force_catalyst == "when-empty" and not args.commit_threshold_on_first_forward:
         parser.error(
             "--force-catalyst when-empty requires --commit-threshold-on-first-forward"

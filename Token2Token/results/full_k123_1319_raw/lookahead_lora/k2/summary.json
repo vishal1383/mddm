@@ -1,0 +1,27 @@
+[
+  {
+    "model_label": "lookahead_lora_checkpoint4000_block32_k2",
+    "model_id": "GSAI-ML/LLaDA-8B-Instruct",
+    "adapter_path": "outputs/token2token/online_lookahead_v6/k2_select1_train7473_step7473/train/checkpoint-004000",
+    "confidence_threshold": 0.95,
+    "examples": 1319,
+    "correct": 977,
+    "accuracy": 0.7407126611068992,
+    "completion_length": 128,
+    "total_model_forwards": 84416,
+    "tokens_per_forward": 2.0,
+    "mean_threshold_tokens": 0.0,
+    "max_threshold_tokens": null,
+    "decoder": "topk",
+    "tokens_per_step": 2,
+    "block_length": 32,
+    "commit_threshold_on_first_forward": false,
+    "unlock_forward": true,
+    "catalyst_tokens_per_forward": 1,
+    "adapter_scope": "all",
+    "catalyst_filter": "text",
+    "catalyst_min_length": 0,
+    "force_catalyst": "always",
+    "elapsed_seconds": 10174.548772573471
+  }
+]

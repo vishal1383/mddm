@@ -43,8 +43,13 @@ PRESERVE_KL_WEIGHT="${PRESERVE_KL_WEIGHT:-5.0}"
 LEARNING_RATE="${LEARNING_RATE:-3e-5}"
 LORA_RANK="${LORA_RANK:-8}"
 LORA_ALPHA="${LORA_ALPHA:-16}"
-CANVASES="${CANVASES:-4}"
-SAVE_EVERY="${SAVE_EVERY:-1000}"
+# Three canvases plus the random-denoising one. A second agent shares this
+# box and a third 8B process gets OOM-killed; v5_t85 died at step 1001 of
+# 2000 that way. Fewer canvases per step is the cheapest way to shrink the
+# activation footprint without changing the objective.
+CANVASES="${CANVASES:-3}"
+# Save often: a killed run should still leave a usable checkpoint.
+SAVE_EVERY="${SAVE_EVERY:-400}"
 LIMIT="${LIMIT:-50}"
 BATCH="${BATCH:-8}"
 SINGLE="--commit-threshold-on-first-forward --no-unlock-forward"

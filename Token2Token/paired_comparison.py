@@ -77,6 +77,10 @@ def compare(baseline, trained):
         int(b["model_forwards"]) - int(a["model_forwards"])
         for a, b in zip(baseline, trained)
     ]
+    accuracy_deltas = [
+        int(bool(b["correct"])) - int(bool(a["correct"]))
+        for a, b in zip(baseline, trained)
+    ]
     return {
         "examples": len(baseline),
         "baseline_correct": both + only_baseline,
@@ -86,6 +90,8 @@ def compare(baseline, trained):
         "only_trained_correct": only_trained,
         "neither_correct": neither,
         "mcnemar_p_value": mcnemar_p_value(only_baseline, only_trained),
+        "accuracy_delta": mean_or_none(accuracy_deltas),
+        "accuracy_delta_ci95": bootstrap_ci(accuracy_deltas),
         "baseline_forwards_per_example": mean_or_none(
             [int(row["model_forwards"]) for row in baseline]
         ),
@@ -125,6 +131,10 @@ def mean_or_none(values):
 def render_markdown(result, baseline_label, trained_label):
     examples = result["examples"]
     low, high = result["forward_delta_ci95"] or (float("nan"), float("nan"))
+    accuracy_low, accuracy_high = result["accuracy_delta_ci95"] or (
+        float("nan"),
+        float("nan"),
+    )
     verdict = read_verdict(result)
     return "\n".join(
         [
@@ -150,6 +160,9 @@ def render_markdown(result, baseline_label, trained_label):
             f"- Only {trained_label} correct: {result['only_trained_correct']}",
             f"- Neither correct: {result['neither_correct']}",
             f"- Two-sided exact p-value: {result['mcnemar_p_value']:.4f}",
+            f"- Paired accuracy change: {100 * result['accuracy_delta']:+.2f} pp",
+            f"- Bootstrap 95% CI: [{100 * accuracy_low:+.2f}, "
+            f"{100 * accuracy_high:+.2f}] pp",
             "",
             "## Latency (paired)",
             "",
@@ -167,7 +180,7 @@ def render_markdown(result, baseline_label, trained_label):
 
 def read_verdict(result):
     quality = (
-        "quality is statistically indistinguishable from baseline"
+        "there is no statistically detectable quality change"
         if result["mcnemar_p_value"] >= 0.05
         else (
             "quality changed significantly"
