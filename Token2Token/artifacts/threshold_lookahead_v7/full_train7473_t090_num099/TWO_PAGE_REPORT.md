@@ -158,17 +158,21 @@ against the stray-token failure found in the IG experiment.
 
 ### Main matched adaptive result
 
-| Model, identical adaptive decoder | Accuracy | Tokens/forward | Forwards/example | Canvas tokens/s | Eval clock |
-|---|---:|---:|---:|---:|---:|
-| Frozen base LLaDA | 68.84% | 5.449 | 23.49 | 26.90 | 104.6 min |
-| Anchor-lookahead LoRA, checkpoint 6,000 | **70.20%** | **7.246** | **17.66** | **33.24** | **84.7 min** |
+| Metric | Frozen base | Ours | Improvement |
+|---|---:|---:|---:|
+| Accuracy | 68.84% | **70.20%** | **+1.36 pp** |
+| Tokens/forward | 5.449 | **7.246** | **+33.0%** |
+| Forwards/example | 23.49 | **17.66** | **-24.8%** |
+| Canvas tokens/s | 26.90 | **33.24** | **+23.6%** |
+| Eval clock | 104.6 min | **84.7 min** | **-19.1%** |
 
 The model commits 33.0% more tokens per forward, uses 24.8% fewer summed logical
-forwards, and is 19.1% faster by wall clock. Threshold bursts explain 94.4% of the
-token-rate increase, supporting the intended mechanism: lookahead training makes
-more positions ready for safe same-forward commitment. The +1.36 accuracy-point
-estimate is positive but not statistically conclusive; efficiency is the primary
-claim.
+forwards, and is 19.1% faster by wall clock. This shows that we can exploit anchor
+information to improve decoding speed without losing accuracy in this full-test
+comparison, matching the earlier intuition that the extra training cost can be
+recovered during inference. Threshold bursts explain 94.4% of the token-rate
+increase, supporting the intended mechanism. The +1.36 accuracy-point estimate is
+positive but not statistically conclusive; efficiency is the primary claim.
 
 ### Fixed-k controls
 
