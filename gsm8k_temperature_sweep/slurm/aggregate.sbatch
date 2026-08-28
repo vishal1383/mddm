@@ -12,5 +12,8 @@ EXPERIMENT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 : "${MDDM_SWEEP_VENV:?MDDM_SWEEP_VENV is required}"
 : "${MDDM_SWEEP_OUTPUT_ROOT:?MDDM_SWEEP_OUTPUT_ROOT is required}"
 
-"$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/aggregate.py" \
-  --output-root "$MDDM_SWEEP_OUTPUT_ROOT"
+ARGS=(--output-root "$MDDM_SWEEP_OUTPUT_ROOT")
+if [[ "${MDDM_SWEEP_ALLOW_PARTIAL:-0}" == "1" ]]; then
+  ARGS+=(--allow-partial)
+fi
+"$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/aggregate.py" "${ARGS[@]}"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate all 60 completed cells and render the final CSV/Markdown tables."""
+"""Validate completed cells and render the matched CSV/Markdown tables."""
 from __future__ import annotations
 
 import argparse
@@ -91,7 +91,7 @@ def collect(output_root: Path, allow_partial: bool = False) -> list[dict[str, An
         rows.append(summary)
     if missing and not allow_partial:
         preview = "\n".join(missing[:8])
-        raise FileNotFoundError(f"{len(missing)} of 60 result cells are missing:\n{preview}")
+        raise FileNotFoundError(f"{len(missing)} of {len(task_matrix())} result cells are missing:\n{preview}")
     return rows
 
 

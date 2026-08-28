@@ -58,15 +58,18 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sft-adapter", default=os.environ.get("SFT_ADAPTER_PATH"))
     parser.add_argument("--policy-checkpoint", default=os.environ.get("UNMASKING_POLICY_CHECKPOINT"))
+    parser.add_argument("--dpo-policy-checkpoint", default=os.environ.get("DPO_POLICY_CHECKPOINT"))
+    parser.add_argument("--require-dpo", action="store_true")
     parser.add_argument("--policy-repo", default=os.environ.get("ML_RL_DLLM_REPO"))
     args = parser.parse_args(argv)
     adapter = require_adapter(args.sft_adapter)
     checkpoint = require_policy_checkpoint(args.policy_checkpoint)
+    dpo_checkpoint = require_policy_checkpoint(args.dpo_policy_checkpoint) if args.require_dpo else None
     repo, revision = require_policy_repo(args.policy_repo)
     matrix = task_matrix()
-    if len(matrix) != 60 or len(METHODS) != 5 or len(TEMPERATURES) != 12:
-        raise AssertionError("expected a 5 x 12 = 60 task matrix")
-    if len(set(matrix)) != len(matrix) or task_for_id(59) != (METHODS[-1], TEMPERATURES[-1]):
+    if len(matrix) != 72 or len(METHODS) != 6 or len(TEMPERATURES) != 12:
+        raise AssertionError("expected a 6 x 12 = 72 task matrix")
+    if len(set(matrix)) != len(matrix) or task_for_id(71) != (METHODS[-1], TEMPERATURES[-1]):
         raise AssertionError("task matrix is not a one-to-one deterministic mapping")
     print(
         json.dumps(
@@ -75,6 +78,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "tasks": len(matrix),
                 "sft_adapter": adapter,
                 "policy_checkpoint": str(checkpoint),
+                "dpo_policy_checkpoint": str(dpo_checkpoint) if dpo_checkpoint else None,
                 "policy_repo": str(repo),
                 "policy_repo_revision": revision,
             },

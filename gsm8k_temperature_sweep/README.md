@@ -1,6 +1,6 @@
 # Full GSM8K temperature and pass@k sweep
 
-This folder is a self-contained, resumable evaluation of five LLaDA-family methods on the complete official 1,319-example GSM8K test split. It creates one matched table over token temperatures `T = 0.1, 0.2, ..., 1.2` with marginal sample accuracy, pass@5, pass@10, and micro Tok/NFE.
+This folder is a self-contained, resumable train-and-evaluate chain for six LLaDA-family methods on GSM8K. It first completes the original five-method table, then trains an offline-DPO version of Apple's unmasking policy on all 7,473 training examples, evaluates it on the complete official 1,319-example test split, and creates a final matched table over token temperatures `T = 0.1, 0.2, ..., 1.2`.
 
 ## Methods
 
@@ -11,6 +11,7 @@ This folder is a self-contained, resumable evaluation of five LLaDA-family metho
 | `dparallel` | [dParallel: Learnable Parallel Decoding for dLLMs](https://arxiv.org/abs/2509.26488) | `Zigeng/dParallel-LLaDA-8B-instruct` |
 | `paper_policy` | [Learning Unmasking Policies for Diffusion Language Models](https://arxiv.org/abs/2512.09106) | Frozen Base plus supplied policy checkpoint |
 | `lora_sft` | Standard full-GSM8K LoRA SFT | Frozen Base plus supplied adapter |
+| `dpo_policy` | Offline trajectory-DPO unmasking policy | Frozen Base plus a newly trained Apple-architecture policy head |
 
 The JSD row implements the pairwise-distribution variational update described by [Mean-Field Parallel Decoding for Discrete Diffusion Language Models](https://arxiv.org/abs/2606.15805), using the exact selector already developed in this repository.
 
@@ -30,7 +31,17 @@ The JSD row implements the pairwise-distribution variational update described by
 - `pass@10`: whether any of paths 0–9 is exact-match correct.
 - `Tok/NFE`: `sum(generated tokens) / sum(full model forwards)` over all ten paths and all examples.
 
-This is 5 methods × 12 temperatures × 1,319 examples × 10 paths = **791,400 complete trajectories**. The array is deliberately a full run, not a screen or promotion gate.
+The original table is 5 methods × 12 temperatures × 1,319 examples × 10 paths = **791,400 complete trajectories**. The DPO evaluation adds 12 × 1,319 × 10 = **158,280 trajectories**, producing a 72-row final table. Every cell is a full run, not a screen or promotion gate.
+
+## Offline-DPO policy
+
+The DPO baseline uses the paper's exact confidence-only, one-block DiT Bernoulli policy and keeps LLaDA fully frozen. After the original 60 rows finish, it collects four deterministic frozen-Base trajectories per training prompt using confidence thresholds `0.30, 0.50, 0.70, 0.90`. It ranks paths with the paper's multiplicative terminal reward:
+
+```text
+correct * ((L - min(NFE, L) + 1) / L) ** alpha
+```
+
+Every strict within-prompt reward ordering becomes an offline preference pair. Tied paths—especially pairs of incorrect paths—produce no preference, preventing a fast-but-wrong training signal. The policy is initialized from and optimized relative to a frozen smart-initialized reference head using the standard pairwise DPO log-ratio loss. There is no critic, GRPO/PPO update, trainable Base parameter, RL checkpoint initialization, or official-test training signal.
 
 ## Checkpoint prerequisite
 
@@ -64,7 +75,15 @@ echo "Submitted job: $JOB_ID"
 tail -n 100 -F "final_results/manifests/slurm-${JOB_ID}.out" "final_results/manifests/slurm-${JOB_ID}.err"
 ```
 
-The controller bootstraps and validates the environment, then submits the complete GPU array and its dependent table job.
+The controller bootstraps and validates the environment, then submits one autonomous dependency chain:
+
+```text
+60 original full-test cells (sequential)
+  -> saved 60-row table
+  -> full 7,473-example DPO collection and training
+  -> 12 DPO full-test cells (sequential)
+  -> saved 72-row final table
+```
 
 After pulling `mddm` on Unity:
 
@@ -82,7 +101,7 @@ export ML_RL_DLLM_REPO="$MDDM_SWEEP_STATE_ROOT/ml-rl-dllm"
 bash scripts/submit.sh
 ```
 
-`submit.sh` first runs a filesystem/revision/task-matrix preflight, then submits all 60 cells to `gpu-preempt`, capped at one active A100 by default. The cells therefore run sequentially. It submits aggregation with `afterok` on the complete array. There are no quality gates and no partial-table early exits.
+`submit.sh` runs a filesystem/revision/task-matrix preflight and submits the complete dependency chain to `gpu-preempt`, capped at one active A100. All GPU work is sequential. Dependencies check process success only; there are no accuracy or throughput gates.
 
 The equivalent direct array command is:
 
@@ -93,7 +112,7 @@ sbatch --partition=gpu-preempt --array=0-59%1 --gpus=a100:1 \
   --export=ALL slurm/sweep.sbatch
 ```
 
-Set `MDDM_SWEEP_ARRAY_LIMIT` or `MDDM_SWEEP_GPUS` only when intentionally overriding the one-A100 sequential default. Unity preempt jobs may be killed after their grace period, so every example is atomically committed and each array cell resumes without replacing completed records.
+The direct array command above runs only the original 60 cells; use `slurm/submit_all.sbatch` for the autonomous DPO extension. Set `MDDM_SWEEP_ARRAY_LIMIT` or `MDDM_SWEEP_GPUS` only when intentionally overriding the one-A100 sequential default. Unity preempt jobs may be killed after their grace period, so evaluation records, DPO preference records, and DPO trainer state are resumable.
 
 ## Outputs
 
@@ -104,11 +123,13 @@ $MDDM_SWEEP_OUTPUT_ROOT/
   dparallel/T0.1/...
   paper_policy/T0.1/...
   lora_sft/T0.1/...
+  dpo_policy/T0.1/...
+  checkpoints/dpo_policy/{training_contract.json,training_manifest.json,model.safetensors,preferences/}
   tables/{final_table.csv,final_table.md,all_summaries.json}
   logs/
 ```
 
-Contracts seal immutable Hugging Face model revisions, adapter/policy hashes, evaluator source, thresholds, geometry, prompt, and seed. Aggregation fails if any of the 60 summaries is absent, malformed, or not a full 1,319-example result.
+Before submitting GPU work, the controller resolves both Hugging Face model references to immutable commit SHAs and exports those same SHAs through every baseline, DPO-training, and DPO-evaluation job. Contracts also seal adapter/policy hashes, evaluator source, thresholds, geometry, prompt, and seed. The intermediate table contains the original 60 cells. Final aggregation fails if any of the 72 summaries is absent, malformed, or not a full 1,319-example result.
 
 For a manual table rebuild:
 
