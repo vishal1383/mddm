@@ -55,6 +55,7 @@ PAPER_POLICY_ARCHITECTURE = {
     "time_period": 1,
     "full_context": True,
 }
+POLICY_METHODS = {"paper_policy", "dpo_policy"}
 
 
 def atomic_json(path: Path, value: Any) -> None:
@@ -293,9 +294,9 @@ def decode_batch(
                 selected = entropy.le(float(entropy_threshold))
                 selected[int(entropy.argmin())] = True
                 commit_sets.append(tuple(int(value) for value in positions[selected].tolist()))
-        elif method == "paper_policy":
+        elif method in POLICY_METHODS:
             if policy is None:
-                raise ValueError("paper_policy requires a loaded policy")
+                raise ValueError(f"{method} requires a loaded policy")
             clean = logits.float().clone()
             clean[..., int(mask_token_id)] = -torch.inf
             maximum = clean.max(dim=-1).values
@@ -365,15 +366,13 @@ def checkpoint_file(path_value: str) -> Path:
     return path
 
 
-def load_policy(args: argparse.Namespace, device: torch.device):
-    if args.method != "paper_policy":
-        return None, None
-    upstream = Path(args.policy_repo).expanduser().resolve()
+def build_policy(policy_repo: str, device: torch.device):
+    upstream = Path(policy_repo).expanduser().resolve()
     if not (upstream / "common/models/policy.py").is_file():
         raise FileNotFoundError(f"official ml-rl-dllm checkout is invalid: {upstream}")
-    sys.path.insert(0, str(upstream))
+    if str(upstream) not in sys.path:
+        sys.path.insert(0, str(upstream))
     from common.models.policy import DiTConfidencePolicy, PolicyHFWrapper
-    from safetensors.torch import load_file
 
     core = DiTConfidencePolicy(
         hidden_dim=PAPER_POLICY_ARCHITECTURE["hidden_dim"],
@@ -386,8 +385,17 @@ def load_policy(args: argparse.Namespace, device: torch.device):
         num_blocks=PAPER_POLICY_ARCHITECTURE["num_blocks"],
         time_period=PAPER_POLICY_ARCHITECTURE["time_period"],
     ).to(device)
-    policy = PolicyHFWrapper(core, "dit_confidence").to(device)
-    checkpoint = checkpoint_file(args.policy_checkpoint)
+    return PolicyHFWrapper(core, "dit_confidence").to(device)
+
+
+def load_policy(args: argparse.Namespace, device: torch.device):
+    if args.method not in POLICY_METHODS:
+        return None, None
+    from safetensors.torch import load_file
+
+    policy = build_policy(args.policy_repo, device)
+    checkpoint_value = args.dpo_policy_checkpoint if args.method == "dpo_policy" else args.policy_checkpoint
+    checkpoint = checkpoint_file(checkpoint_value)
     missing, unexpected = policy.load_state_dict(load_file(str(checkpoint)), strict=False)
     if missing or unexpected:
         raise ValueError(f"policy checkpoint mismatch; missing={missing}, unexpected={unexpected}")
@@ -488,22 +496,39 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     requested_revision = args.dparallel_revision if args.method == "dparallel" else args.base_revision
     args.resolved_model_id, args.resolved_model_revision = resolve_model(args.method, args.hf_token, requested_revision)
     policy_checkpoint_receipt = None
+    policy_training_receipt = None
     policy_repo_revision = None
-    if args.method == "paper_policy":
-        policy_checkpoint_path = checkpoint_file(args.policy_checkpoint)
+    if args.method in POLICY_METHODS:
+        checkpoint_value = args.dpo_policy_checkpoint if args.method == "dpo_policy" else args.policy_checkpoint
+        policy_checkpoint_path = checkpoint_file(checkpoint_value)
         policy_checkpoint_receipt = {
             "path": str(policy_checkpoint_path),
             "sha256": file_sha256(policy_checkpoint_path),
         }
         policy_repo_revision = git_revision(args.policy_repo)
+        if args.method == "dpo_policy":
+            training_manifest = policy_checkpoint_path.parent / "training_manifest.json"
+            if not training_manifest.is_file():
+                raise FileNotFoundError(f"DPO checkpoint has no training manifest: {training_manifest}")
+            training_data = json.loads(training_manifest.read_text(encoding="utf-8"))
+            if not training_data.get("complete"):
+                raise ValueError(f"DPO training is not complete: {training_manifest}")
+            if training_data.get("base_model_revision") != args.resolved_model_revision:
+                raise ValueError("DPO checkpoint and evaluation Base revisions differ")
+            policy_training_receipt = {
+                "path": str(training_manifest),
+                "sha256": file_sha256(training_manifest),
+            }
     contract = {
         "schema": SCHEMA_VERSION,
         "method": args.method,
         "method_label": METHOD_LABELS[args.method],
         "temperature": args.temperature,
         "temperature_semantics": "categorical_softmax_logits_div_T",
-        "policy_temperature": args.policy_temperature if args.method == "paper_policy" else None,
-        "policy_sampling": "independent_bernoulli_then_force_argmax_if_empty" if args.method == "paper_policy" else None,
+        "policy_temperature": args.policy_temperature if args.method in POLICY_METHODS else None,
+        "policy_sampling": "independent_bernoulli_then_force_argmax_if_empty"
+        if args.method in POLICY_METHODS
+        else None,
         "dataset": f"{DATASET_ID}:{DATASET_CONFIG}:{DATASET_SPLIT}",
         "start": args.start,
         "stop": args.stop,
@@ -522,9 +547,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "model_revision": args.resolved_model_revision,
         "evaluator_sources_sha256": source_receipt,
         "sft_adapter": resolve_adapter_hash(args.sft_adapter) if args.method == "lora_sft" else None,
-        "paper_policy_architecture": PAPER_POLICY_ARCHITECTURE if args.method == "paper_policy" else None,
-        "paper_policy_checkpoint": policy_checkpoint_receipt,
-        "paper_policy_repo_revision": policy_repo_revision,
+        "unmasking_policy_architecture": PAPER_POLICY_ARCHITECTURE if args.method in POLICY_METHODS else None,
+        "unmasking_policy_checkpoint": policy_checkpoint_receipt,
+        "unmasking_policy_training_manifest": policy_training_receipt,
+        "unmasking_policy_repo_revision": policy_repo_revision,
     }
     contract["contract_sha256"] = canonical_sha256(contract)
     contract_path = output / "contract.json"
@@ -651,6 +677,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--sft-adapter", default=os.environ.get("SFT_ADAPTER_PATH"))
     parser.add_argument("--policy-checkpoint", default=os.environ.get("UNMASKING_POLICY_CHECKPOINT"))
+    parser.add_argument("--dpo-policy-checkpoint", default=os.environ.get("DPO_POLICY_CHECKPOINT"))
     parser.add_argument("--policy-repo", default=os.environ.get("ML_RL_DLLM_REPO"))
     parser.add_argument("--hf-token", default=os.environ.get("HF_TOKEN"))
     parser.add_argument("--base-revision", default=os.environ.get("BASE_MODEL_REVISION", "main"))
@@ -681,6 +708,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("lora_sft requires SFT_ADAPTER_PATH or --sft-adapter")
     if args.method == "paper_policy" and (not args.policy_checkpoint or not args.policy_repo):
         parser.error("paper_policy requires UNMASKING_POLICY_CHECKPOINT and ML_RL_DLLM_REPO")
+    if args.method == "dpo_policy" and (not args.dpo_policy_checkpoint or not args.policy_repo):
+        parser.error("dpo_policy requires DPO_POLICY_CHECKPOINT and ML_RL_DLLM_REPO")
     return args
 
 

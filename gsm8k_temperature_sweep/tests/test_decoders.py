@@ -27,13 +27,13 @@ class DecoderTransitionTest(unittest.TestCase):
             def __call__(self, masked, confidence, timestep):
                 return torch.full(masked.shape, 20.0, device=masked.device)
 
-        for method in ("base", "jsd_mean_field", "dparallel", "paper_policy", "lora_sft"):
+        for method in ("base", "jsd_mean_field", "dparallel", "paper_policy", "lora_sft", "dpo_policy"):
             with self.subTest(method=method):
                 result = decode_batch(
                     Model(),
                     [1],
                     method=method,
-                    policy=Policy() if method == "paper_policy" else None,
+                    policy=Policy() if method in {"paper_policy", "dpo_policy"} else None,
                     temperature=0.5,
                     policy_temperature=0.5,
                     confidence_threshold=0.9,

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 
-SCHEMA_VERSION = "gsm8k_temperature_passk_v1"
+SCHEMA_VERSION = "gsm8k_temperature_passk_v2"
 DATASET_ID = "openai/gsm8k"
 DATASET_CONFIG = "main"
 DATASET_SPLIT = "test"
@@ -25,6 +25,7 @@ METHODS = (
     "dparallel",
     "paper_policy",
     "lora_sft",
+    "dpo_policy",
 )
 METHOD_LABELS = {
     "base": "Frozen Base confidence decoder",
@@ -32,6 +33,7 @@ METHOD_LABELS = {
     "dparallel": "dParallel",
     "paper_policy": "Learning Unmasking Policies",
     "lora_sft": "Standard full-GSM8K LoRA SFT",
+    "dpo_policy": "Offline-DPO unmasking policy",
 }
 TEMPERATURES = tuple(round(index / 10, 1) for index in range(1, 13))
 
