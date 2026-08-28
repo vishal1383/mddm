@@ -9,7 +9,7 @@ from pathlib import Path
 
 from huggingface_hub import HfApi
 
-from evaluate import BASE_MODEL_ID, DPARALLEL_MODEL_ID
+from artifact_sources import BASE_MODEL_ID, DPARALLEL_MODEL_ID, PAPER_POLICY_REPO_ID
 
 
 def main() -> None:
@@ -19,21 +19,44 @@ def main() -> None:
     output = Path(args.output).expanduser().resolve() if args.output else None
     if output and output.is_file():
         sealed = json.loads(output.read_text(encoding="utf-8"))
-        print(str(sealed["base_model_revision"]), str(sealed["dparallel_model_revision"]))
+        expected = {
+            "base_model_id": BASE_MODEL_ID,
+            "dparallel_model_id": DPARALLEL_MODEL_ID,
+            "paper_policy_repo_id": PAPER_POLICY_REPO_ID,
+        }
+        if any(sealed.get(key) != value for key, value in expected.items()):
+            raise ValueError(f"saved revision manifest has different artifact sources: {output}")
+        print(
+            str(sealed["base_model_revision"]),
+            str(sealed["dparallel_model_revision"]),
+            str(sealed["paper_policy_revision"]),
+        )
         return
     api = HfApi(token=os.environ.get("HF_TOKEN"))
     base = api.model_info(BASE_MODEL_ID, revision=os.environ.get("BASE_MODEL_REVISION", "main")).sha
     dparallel = api.model_info(
         DPARALLEL_MODEL_ID, revision=os.environ.get("DPARALLEL_MODEL_REVISION", "main")
     ).sha
-    if not base or not dparallel or any(character.isspace() for character in f"{base}{dparallel}"):
+    paper_policy = api.model_info(
+        PAPER_POLICY_REPO_ID, revision=os.environ.get("PAPER_POLICY_REVISION", "main")
+    ).sha
+    if not base or not dparallel or not paper_policy or any(
+        character.isspace() for character in f"{base}{dparallel}{paper_policy}"
+    ):
         raise RuntimeError("failed to seal immutable model revisions")
     if output:
         output.parent.mkdir(parents=True, exist_ok=True)
         temporary = output.with_suffix(output.suffix + f".tmp.{os.getpid()}")
         temporary.write_text(
             json.dumps(
-                {"base_model_revision": str(base), "dparallel_model_revision": str(dparallel)},
+                {
+                    "base_model_id": BASE_MODEL_ID,
+                    "base_model_revision": str(base),
+                    "dparallel_model_id": DPARALLEL_MODEL_ID,
+                    "dparallel_model_revision": str(dparallel),
+                    "paper_policy_repo_id": PAPER_POLICY_REPO_ID,
+                    "paper_policy_revision": str(paper_policy),
+                },
                 indent=2,
                 sort_keys=True,
             )
@@ -41,7 +64,7 @@ def main() -> None:
             encoding="utf-8",
         )
         os.replace(temporary, output)
-    print(base, dparallel)
+    print(base, dparallel, paper_policy)
 
 
 if __name__ == "__main__":

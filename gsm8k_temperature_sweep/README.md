@@ -9,8 +9,8 @@ This folder is a self-contained, resumable train-and-evaluate chain for six LLaD
 | `base` | Frozen Base confidence decoder | `GSAI-ML/LLaDA-8B-Instruct` |
 | `jsd_mean_field` | Training-free JSD pair-interaction fixed-point decoder | Frozen Base |
 | `dparallel` | [dParallel: Learnable Parallel Decoding for dLLMs](https://arxiv.org/abs/2509.26488) | `Zigeng/dParallel-LLaDA-8B-instruct` |
-| `paper_policy` | [Learning Unmasking Policies for Diffusion Language Models](https://arxiv.org/abs/2512.09106) | Frozen Base plus supplied policy checkpoint |
-| `lora_sft` | Standard full-GSM8K LoRA SFT | Frozen Base plus supplied adapter |
+| `paper_policy` | [Learning Unmasking Policies for Diffusion Language Models](https://arxiv.org/abs/2512.09106) | Frozen Base plus `orkunkinay/ml-rl-dllm-gs8` checkpoint 14972 from Hugging Face |
+| `lora_sft` | Standard full-GSM8K LoRA SFT | Frozen Base plus the exact adapter bundled under `artifacts/gsm8k_lora_sft` |
 | `dpo_policy` | Offline trajectory-DPO unmasking policy | Frozen Base plus a newly trained Apple-architecture policy head |
 
 The JSD row implements the pairwise-distribution variational update described by [Mean-Field Parallel Decoding for Discrete Diffusion Language Models](https://arxiv.org/abs/2606.15805), using the exact selector already developed in this repository.
@@ -43,26 +43,9 @@ correct * ((L - min(NFE, L) + 1) / L) ** alpha
 
 Every strict within-prompt reward ordering becomes an offline preference pair. Tied paths—especially pairs of incorrect paths—produce no preference, preventing a fast-but-wrong training signal. The policy is initialized from and optimized relative to a frozen smart-initialized reference head using the standard pairwise DPO log-ratio loss. There is no critic, GRPO/PPO update, trainable Base parameter, RL checkpoint initialization, or official-test training signal.
 
-## Checkpoint prerequisite
+## Artifact resolution
 
-The Apple source release provides training/evaluation code and expects evaluation to receive a locally trained `checkpoint-*/model.safetensors`; it does not include a pretrained policy weight file in the repository. Therefore the sweep requires a real policy checkpoint through `UNMASKING_POLICY_CHECKPOINT`. It never substitutes random policy weights or silently omits the row.
-
-Likewise, the standard LoRA adapter is an artifact, not part of Git. Copy both artifacts to storage visible from every Unity compute node before submission:
-
-```bash
-export UNMASKING_POLICY_CHECKPOINT=/project/your_group/checkpoints/unmasking/checkpoint-XXXX/model.safetensors
-export SFT_ADAPTER_PATH=/project/your_group/checkpoints/gsm8k_lora/adapter-final
-export HF_TOKEN=hf_...
-```
-
-If the unmasking checkpoint still needs to be trained, the pinned upstream recipe is:
-
-```bash
-cd "$ML_RL_DLLM_REPO"
-accelerate launch --config_file configs/accelerate_configs/8gpu_ddp.yaml \
-  -m train.train \
-  --config configs/experiment_configs/llada_8b_instruct_dit_confidence_BL32_mixture.yaml
-```
+No checkpoint-path exports are required. Base and dParallel are downloaded from their Hugging Face repositories. The public Apple-method policy artifact is downloaded from `orkunkinay/ml-rl-dllm-gs8/checkpoint-14972/model.safetensors`. The exact standard-LoRA adapter used by the existing mddm full256 baseline is committed inside this standalone folder. DPO starts from frozen Base and writes its own resumable checkpoint under `final_results/checkpoints/dpo_policy`.
 
 ## Unity setup and launch
 
@@ -77,7 +60,7 @@ tail -n 100 -F "final_results/manifests/slurm-${JOB_ID}.out" "final_results/mani
 
 The submitted job itself owns one A100 on `gpu-preempt`. It bootstraps and validates the environment, then runs every stage sequentially inside that single allocation—there are no nested `sbatch` calls:
 
-The standard LoRA files (`adapter_config.json`, `adapter_model.safetensors`) and Apple-policy `model.safetensors` are resolved from the directory where `sbatch` is invoked. No checkpoint-path exports are required. Hugging Face authentication uses the existing login/environment cache.
+No checkpoint-path exports are required. Hugging Face authentication uses the existing login/environment cache when needed.
 
 ```text
 60 original full-test cells (sequential)
@@ -105,7 +88,7 @@ $MDDM_SWEEP_OUTPUT_ROOT/
   logs/
 ```
 
-Before submitting GPU work, the controller resolves both Hugging Face model references to immutable commit SHAs and exports those same SHAs through every baseline, DPO-training, and DPO-evaluation job. Contracts also seal adapter/policy hashes, evaluator source, thresholds, geometry, prompt, and seed. The intermediate table contains the original 60 cells. Final aggregation fails if any of the 72 summaries is absent, malformed, or not a full 1,319-example result.
+Before running GPU work, the controller resolves Base, dParallel, and the paper-policy repository to immutable commit SHAs. Contracts also seal adapter/policy hashes, evaluator source, thresholds, geometry, prompt, and seed. The intermediate table contains the original 60 cells. Final aggregation fails if any of the 72 summaries is absent, malformed, or not a full 1,319-example result.
 
 For a manual table rebuild:
 
