@@ -35,6 +35,8 @@ class SubmissionChainTest(unittest.TestCase):
         self.assertNotIn("SLURM_SUBMIT_DIR", batch)
         self.assertNotIn("EXPERIMENT_ROOT=", batch)
         self.assertIn("cd gsm8k_temperature_sweep", batch)
+        self.assertIn('MDDM_SWEEP_STATE_ROOT="${MDDM_SWEEP_STATE_ROOT:-$PWD/.runtime}"', batch)
+        self.assertNotIn("SCRATCH", batch)
         self.assertIn(
             "#SBATCH --output=gsm8k_temperature_sweep/final_results/manifests/slurm-%j.out",
             batch,

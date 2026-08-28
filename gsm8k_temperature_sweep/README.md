@@ -60,6 +60,11 @@ tail -n 100 -F \
   "gsm8k_temperature_sweep/final_results/manifests/slurm-${JOB_ID}.err"
 ```
 
+By default, all large state stays inside the project clone: the environment,
+Hugging Face cache, and upstream policy checkout use
+`gsm8k_temperature_sweep/.runtime`, while checkpoints, records, predictions,
+and tables use `gsm8k_temperature_sweep/final_results`.
+
 The submitted job itself owns one A100 on `gpu-preempt`. It bootstraps and validates the environment, then runs every stage sequentially inside that single allocation—there are no nested `sbatch` calls:
 
 No checkpoint-path exports are required. Hugging Face authentication uses the existing login/environment cache when needed.
