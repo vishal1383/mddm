@@ -82,18 +82,18 @@ export ML_RL_DLLM_REPO="$MDDM_SWEEP_STATE_ROOT/ml-rl-dllm"
 bash scripts/submit.sh
 ```
 
-`submit.sh` first runs a filesystem/revision/task-matrix preflight, then submits all 60 cells to `gpu-preempt`, capped at eight simultaneous GPUs by default. It submits aggregation with `afterok` on the complete array. There are no quality gates and no partial-table early exits.
+`submit.sh` first runs a filesystem/revision/task-matrix preflight, then submits all 60 cells to `gpu-preempt`, capped at one active A100 by default. The cells therefore run sequentially. It submits aggregation with `afterok` on the complete array. There are no quality gates and no partial-table early exits.
 
 The equivalent direct array command is:
 
 ```bash
-sbatch --partition=gpu-preempt --array=0-59%8 \
+sbatch --partition=gpu-preempt --array=0-59%1 --gpus=a100:1 \
   --output="$MDDM_SWEEP_OUTPUT_ROOT/logs/%A_%a.out" \
   --error="$MDDM_SWEEP_OUTPUT_ROOT/logs/%A_%a.err" \
   --export=ALL slurm/sweep.sbatch
 ```
 
-Set `MDDM_SWEEP_ARRAY_LIMIT` to change concurrency before using `submit.sh`. The job requests one bf16 GPU with at least 40 GB VRAM. Unity preempt jobs may be killed after their grace period, so every example is atomically committed and each array cell resumes without replacing completed records.
+Set `MDDM_SWEEP_ARRAY_LIMIT` or `MDDM_SWEEP_GPUS` only when intentionally overriding the one-A100 sequential default. Unity preempt jobs may be killed after their grace period, so every example is atomically committed and each array cell resumes without replacing completed records.
 
 ## Outputs
 
