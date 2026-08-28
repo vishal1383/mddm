@@ -28,6 +28,14 @@ class SubmissionChainTest(unittest.TestCase):
         self.assertIn("#SBATCH --gres=gpu:a100:1", batch)
         self.assertNotIn("#SBATCH --partition=cpu", batch)
         self.assertNotIn("#SBATCH --qos=", batch)
+        self.assertIn('SFT_ADAPTER_PATH="${SFT_ADAPTER_PATH:-${SLURM_SUBMIT_DIR:-$EXPERIMENT_ROOT}}"', batch)
+        self.assertIn(
+            'UNMASKING_POLICY_CHECKPOINT="${UNMASKING_POLICY_CHECKPOINT:-${SLURM_SUBMIT_DIR:-$EXPERIMENT_ROOT}}"',
+            batch,
+        )
+        self.assertNotIn("Export SFT_ADAPTER_PATH before sbatch", batch)
+        self.assertNotIn("Export UNMASKING_POLICY_CHECKPOINT before sbatch", batch)
+        self.assertNotIn("Export HF_TOKEN before sbatch", batch)
 
 
 if __name__ == "__main__":

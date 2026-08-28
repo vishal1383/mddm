@@ -66,7 +66,7 @@ accelerate launch --config_file configs/accelerate_configs/8gpu_ddp.yaml \
 
 ## Unity setup and launch
 
-Minimal single-entrypoint launch (after setting the three artifact/authentication variables):
+Minimal single-entrypoint launch from the experiment directory:
 
 ```bash
 mkdir -p final_results/manifests
@@ -76,6 +76,8 @@ tail -n 100 -F "final_results/manifests/slurm-${JOB_ID}.out" "final_results/mani
 ```
 
 The submitted job itself owns one A100 on `gpu-preempt`. It bootstraps and validates the environment, then runs every stage sequentially inside that single allocation—there are no nested `sbatch` calls:
+
+The standard LoRA files (`adapter_config.json`, `adapter_model.safetensors`) and Apple-policy `model.safetensors` are resolved from the directory where `sbatch` is invoked. No checkpoint-path exports are required. Hugging Face authentication uses the existing login/environment cache.
 
 ```text
 60 original full-test cells (sequential)
