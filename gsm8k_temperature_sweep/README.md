@@ -49,13 +49,15 @@ No checkpoint-path exports are required. Base and dParallel are downloaded from 
 
 ## Unity setup and launch
 
-Minimal single-entrypoint launch from the experiment directory:
+Minimal single-entrypoint launch from the `mddm` repository root:
 
 ```bash
-mkdir -p final_results/manifests
-JOB_ID=$(sbatch --parsable slurm/submit_all.sbatch)
+mkdir -p gsm8k_temperature_sweep/final_results/manifests
+JOB_ID=$(sbatch --parsable gsm8k_temperature_sweep/slurm/submit_all.sbatch)
 echo "Submitted job: $JOB_ID"
-tail -n 100 -F "final_results/manifests/slurm-${JOB_ID}.out" "final_results/manifests/slurm-${JOB_ID}.err"
+tail -n 100 -F \
+  "gsm8k_temperature_sweep/final_results/manifests/slurm-${JOB_ID}.out" \
+  "gsm8k_temperature_sweep/final_results/manifests/slurm-${JOB_ID}.err"
 ```
 
 The submitted job itself owns one A100 on `gpu-preempt`. It bootstraps and validates the environment, then runs every stage sequentially inside that single allocation—there are no nested `sbatch` calls:

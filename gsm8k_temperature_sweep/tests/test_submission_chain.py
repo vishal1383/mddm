@@ -34,6 +34,11 @@ class SubmissionChainTest(unittest.TestCase):
         self.assertNotIn("#SBATCH --qos=", batch)
         self.assertNotIn("SLURM_SUBMIT_DIR", batch)
         self.assertNotIn("EXPERIMENT_ROOT=", batch)
+        self.assertIn("cd gsm8k_temperature_sweep", batch)
+        self.assertIn(
+            "#SBATCH --output=gsm8k_temperature_sweep/final_results/manifests/slurm-%j.out",
+            batch,
+        )
         self.assertIn("bash scripts/bootstrap_env.sh", batch)
         self.assertIn("exec bash scripts/run_sequential.sh", batch)
         self.assertNotIn('dirname "${BASH_SOURCE[0]}"', batch)
@@ -47,7 +52,8 @@ class SubmissionChainTest(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temporary_value:
             temporary = Path(temporary_value)
-            submit_dir = temporary / "checkout/gsm8k_temperature_sweep"
+            checkout = temporary / "checkout"
+            submit_dir = checkout / "gsm8k_temperature_sweep"
             scripts = submit_dir / "scripts"
             scripts.mkdir(parents=True)
             (scripts / "bootstrap_env.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
@@ -72,7 +78,7 @@ class SubmissionChainTest(unittest.TestCase):
                     "FAKE_BASH_CALLS": str(calls),
                     "PATH": f"{fake_bin}:{os.environ['PATH']}",
                 },
-                cwd=submit_dir,
+                cwd=checkout,
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual(
