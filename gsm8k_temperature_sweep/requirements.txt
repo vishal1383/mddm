@@ -1,0 +1,10 @@
+torch>=2.5,<3
+transformers==4.53.0
+datasets==4.0.0
+peft==0.15.1
+accelerate==1.4.0
+huggingface-hub>=0.30,<1
+safetensors>=0.4.5
+sentencepiece>=0.2
+tiktoken>=0.9
+numpy>=1.26
