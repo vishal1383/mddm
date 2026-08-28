@@ -125,6 +125,7 @@ $MDDM_SWEEP_OUTPUT_ROOT/
   lora_sft/T0.1/...
   dpo_policy/T0.1/...
   checkpoints/dpo_policy/{training_contract.json,training_manifest.json,model.safetensors,preferences/}
+  tables/{baseline_60_table.csv,baseline_60_table.md,baseline_60_all_summaries.json}
   tables/{final_table.csv,final_table.md,all_summaries.json}
   logs/
 ```
