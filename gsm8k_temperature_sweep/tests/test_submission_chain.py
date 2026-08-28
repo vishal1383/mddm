@@ -37,6 +37,9 @@ class SubmissionChainTest(unittest.TestCase):
         self.assertIn("cd gsm8k_temperature_sweep", batch)
         self.assertIn('MDDM_SWEEP_STATE_ROOT="${MDDM_SWEEP_STATE_ROOT:-$PWD/.runtime}"', batch)
         self.assertNotIn("SCRATCH", batch)
+        self.assertIn('PIP_CACHE_DIR="$MDDM_SWEEP_STATE_ROOT/pip-cache"', batch)
+        self.assertIn('TMPDIR="$MDDM_SWEEP_STATE_ROOT/tmp"', batch)
+        self.assertIn('HF_HOME="$MDDM_SWEEP_STATE_ROOT/huggingface"', batch)
         self.assertIn(
             "#SBATCH --output=gsm8k_temperature_sweep/final_results/manifests/slurm-%j.out",
             batch,
