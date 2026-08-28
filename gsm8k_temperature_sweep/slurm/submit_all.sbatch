@@ -12,14 +12,12 @@
 
 set -euo pipefail
 
-cd "$SLURM_SUBMIT_DIR"
-EXPERIMENT_ROOT="$PWD"
-export MDDM_SWEEP_STATE_ROOT="${MDDM_SWEEP_STATE_ROOT:-${SCRATCH:-$EXPERIMENT_ROOT/.runtime}}"
-export MDDM_SWEEP_OUTPUT_ROOT="${MDDM_SWEEP_OUTPUT_ROOT:-$EXPERIMENT_ROOT/final_results}"
+export MDDM_SWEEP_STATE_ROOT="${MDDM_SWEEP_STATE_ROOT:-${SCRATCH:-$PWD/.runtime}}"
+export MDDM_SWEEP_OUTPUT_ROOT="${MDDM_SWEEP_OUTPUT_ROOT:-$PWD/final_results}"
 export PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
 
-bash "$EXPERIMENT_ROOT/scripts/bootstrap_env.sh"
+bash scripts/bootstrap_env.sh
 export MDDM_SWEEP_VENV="$MDDM_SWEEP_STATE_ROOT/venv"
 export ML_RL_DLLM_REPO="$MDDM_SWEEP_STATE_ROOT/ml-rl-dllm"
 
-exec bash "$EXPERIMENT_ROOT/scripts/run_sequential.sh"
+exec bash scripts/run_sequential.sh
