@@ -85,7 +85,7 @@ The submitted job itself owns one A100 on `gpu-preempt`. It bootstraps and valid
   -> saved 72-row final table
 ```
 
-`submit_all.sbatch` explicitly requests `--partition=gpu-preempt` and `--gpus=a100:1`. It has a 45-hour wall-time, receives `USR1` before preemption, saves atomic progress, and requeues the same job. On restart, valid completed cells are skipped without loading an 8B model; evaluation records, DPO preference records, DPO trainer state, and sealed model revisions are reused. There are no accuracy or throughput gates.
+`submit_all.sbatch` explicitly requests `--partition=gpu-preempt` and `--gres=gpu:a100:1`, with no separate QoS. It has a 45-hour wall-time, receives `USR1` before preemption, saves atomic progress, and requeues the same job. On restart, valid completed cells are skipped without loading an 8B model; evaluation records, DPO preference records, DPO trainer state, and sealed model revisions are reused. There are no accuracy or throughput gates.
 
 ## Outputs
 

@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=gsm8k-passk-a100
 #SBATCH --partition=gpu-preempt
-#SBATCH --qos=long
 #SBATCH --time=45:00:00
-#SBATCH --gpus=a100:1
+#SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=160G
 #SBATCH --requeue
