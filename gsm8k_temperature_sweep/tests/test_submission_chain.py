@@ -32,8 +32,10 @@ class SubmissionChainTest(unittest.TestCase):
         self.assertIn("#SBATCH --gres=gpu:a100:1", batch)
         self.assertNotIn("#SBATCH --partition=cpu", batch)
         self.assertNotIn("#SBATCH --qos=", batch)
-        self.assertIn('cd "$SLURM_SUBMIT_DIR"', batch)
-        self.assertIn('EXPERIMENT_ROOT="$PWD"', batch)
+        self.assertNotIn("SLURM_SUBMIT_DIR", batch)
+        self.assertNotIn("EXPERIMENT_ROOT=", batch)
+        self.assertIn("bash scripts/bootstrap_env.sh", batch)
+        self.assertIn("exec bash scripts/run_sequential.sh", batch)
         self.assertNotIn('dirname "${BASH_SOURCE[0]}"', batch)
         self.assertNotIn("SFT_ADAPTER_PATH=", batch)
         self.assertNotIn("UNMASKING_POLICY_CHECKPOINT=", batch)
@@ -67,15 +69,15 @@ class SubmissionChainTest(unittest.TestCase):
                 text=True,
                 env={
                     **os.environ,
-                    "SLURM_SUBMIT_DIR": str(submit_dir),
                     "FAKE_BASH_CALLS": str(calls),
                     "PATH": f"{fake_bin}:{os.environ['PATH']}",
                 },
+                cwd=submit_dir,
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual(
                 calls.read_text(encoding="utf-8").splitlines(),
-                [str(scripts / "bootstrap_env.sh"), str(scripts / "run_sequential.sh")],
+                ["scripts/bootstrap_env.sh", "scripts/run_sequential.sh"],
             )
 
 
