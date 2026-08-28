@@ -2,3 +2,4 @@
 results/
 __pycache__/
 *.pyc
+!artifacts/gsm8k_lora_sft/adapter_model.safetensors

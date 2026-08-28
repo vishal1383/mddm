@@ -44,12 +44,12 @@ run_stage() {
   return "$status"
 }
 
-run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/preflight.py"
-read -r BASE_MODEL_REVISION DPARALLEL_MODEL_REVISION < <(
+read -r BASE_MODEL_REVISION DPARALLEL_MODEL_REVISION PAPER_POLICY_REVISION < <(
   "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/seal_model_revisions.py" \
     --output "$MDDM_SWEEP_OUTPUT_ROOT/manifests/sealed_model_revisions.json"
 )
-export BASE_MODEL_REVISION DPARALLEL_MODEL_REVISION
+export BASE_MODEL_REVISION DPARALLEL_MODEL_REVISION PAPER_POLICY_REVISION
+run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/preflight.py"
 
 run_eval_cell() {
   local task_id="$1"

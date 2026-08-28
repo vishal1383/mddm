@@ -17,6 +17,13 @@ import subprocess
 import torch
 
 from answers import extract_gsm8k_answer
+from artifact_sources import (
+    BASE_MODEL_ID,
+    DPARALLEL_MODEL_ID,
+    PAPER_POLICY_FILENAME,
+    PAPER_POLICY_REPO_ID,
+    SFT_ADAPTER_PATH,
+)
 from experiment_contract import (
     BLOCK_LENGTH,
     CANVAS_LENGTH,
@@ -39,8 +46,6 @@ from experiment_contract import (
 )
 
 
-BASE_MODEL_ID = "GSAI-ML/LLaDA-8B-Instruct"
-DPARALLEL_MODEL_ID = "Zigeng/dParallel-LLaDA-8B-instruct"
 MASK_TOKEN_ID = 126336
 PAPER_POLICY_ARCHITECTURE = {
     "policy_type": "dit_confidence",
@@ -366,6 +371,43 @@ def checkpoint_file(path_value: str) -> Path:
     return path
 
 
+def resolve_policy_checkpoint(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
+    """Resolve either the locally trained DPO head or the sealed HF paper head."""
+    if args.method == "dpo_policy":
+        checkpoint = checkpoint_file(args.dpo_policy_checkpoint)
+        return checkpoint, {
+            "source": "locally_trained_dpo",
+            "path": str(checkpoint),
+            "sha256": file_sha256(checkpoint),
+        }
+    local_override = getattr(args, "policy_checkpoint", None)
+    if local_override:
+        checkpoint = checkpoint_file(local_override)
+        return checkpoint, {
+            "source": "local_override",
+            "path": str(checkpoint),
+            "sha256": file_sha256(checkpoint),
+        }
+    from huggingface_hub import hf_hub_download
+
+    revision = str(getattr(args, "paper_policy_revision", "main"))
+    checkpoint = Path(
+        hf_hub_download(
+            repo_id=PAPER_POLICY_REPO_ID,
+            filename=PAPER_POLICY_FILENAME,
+            revision=revision,
+            token=getattr(args, "hf_token", None),
+        )
+    ).resolve()
+    return checkpoint, {
+        "source": "huggingface",
+        "repo_id": PAPER_POLICY_REPO_ID,
+        "filename": PAPER_POLICY_FILENAME,
+        "resolved_revision": revision,
+        "sha256": file_sha256(checkpoint),
+    }
+
+
 def build_policy(policy_repo: str, device: torch.device):
     upstream = Path(policy_repo).expanduser().resolve()
     if not (upstream / "common/models/policy.py").is_file():
@@ -394,15 +436,18 @@ def load_policy(args: argparse.Namespace, device: torch.device):
     from safetensors.torch import load_file
 
     policy = build_policy(args.policy_repo, device)
-    checkpoint_value = args.dpo_policy_checkpoint if args.method == "dpo_policy" else args.policy_checkpoint
-    checkpoint = checkpoint_file(checkpoint_value)
+    checkpoint = getattr(args, "resolved_policy_checkpoint", None)
+    receipt = getattr(args, "resolved_policy_checkpoint_receipt", None)
+    if checkpoint is None or receipt is None:
+        checkpoint, receipt = resolve_policy_checkpoint(args)
+    checkpoint = Path(checkpoint)
     missing, unexpected = policy.load_state_dict(load_file(str(checkpoint)), strict=False)
     if missing or unexpected:
         raise ValueError(f"policy checkpoint mismatch; missing={missing}, unexpected={unexpected}")
     policy.eval()
     for parameter in policy.parameters():
         parameter.requires_grad_(False)
-    return policy, {"path": str(checkpoint), "sha256": file_sha256(checkpoint)}
+    return policy, dict(receipt)
 
 
 def resolve_adapter_hash(adapter_path: str | None) -> dict[str, Any] | None:
@@ -417,8 +462,14 @@ def resolve_adapter_hash(adapter_path: str | None) -> dict[str, Any] | None:
     config = path / "adapter_config.json" if path.is_dir() else path.parent / "adapter_config.json"
     if not config.is_file():
         raise FileNotFoundError(f"LoRA adapter config is missing: {config}")
+    resolved = path.resolve()
+    try:
+        source = str(resolved.relative_to(Path(__file__).resolve().parent))
+    except ValueError:
+        source = str(resolved)
     return {
-        "path": str(path.resolve()),
+        "source": "bundled" if resolved == SFT_ADAPTER_PATH.resolve() else "local_override",
+        "path": source,
         "weight_sha256": file_sha256(weight),
         "config_sha256": file_sha256(config),
     }
@@ -464,7 +515,7 @@ def load_model_and_tokenizer(args: argparse.Namespace, device: torch.device):
             raise ValueError("lora_sft requires --sft-adapter")
         from peft import PeftModel
 
-        model = PeftModel.from_pretrained(model, args.sft_adapter).merge_and_unload()
+        model = PeftModel.from_pretrained(model, str(args.sft_adapter)).merge_and_unload()
     model = model.to(device).eval()
     for parameter in model.parameters():
         parameter.requires_grad_(False)
@@ -499,12 +550,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     policy_training_receipt = None
     policy_repo_revision = None
     if args.method in POLICY_METHODS:
-        checkpoint_value = args.dpo_policy_checkpoint if args.method == "dpo_policy" else args.policy_checkpoint
-        policy_checkpoint_path = checkpoint_file(checkpoint_value)
-        policy_checkpoint_receipt = {
-            "path": str(policy_checkpoint_path),
-            "sha256": file_sha256(policy_checkpoint_path),
-        }
+        policy_checkpoint_path, policy_checkpoint_receipt = resolve_policy_checkpoint(args)
+        args.resolved_policy_checkpoint = policy_checkpoint_path
+        args.resolved_policy_checkpoint_receipt = policy_checkpoint_receipt
         policy_repo_revision = git_revision(args.policy_repo)
         if args.method == "dpo_policy":
             training_manifest = policy_checkpoint_path.parent / "training_manifest.json"
@@ -675,13 +723,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--method", choices=METHODS)
     parser.add_argument("--temperature", type=float)
     parser.add_argument("--output-root", required=True)
-    parser.add_argument("--sft-adapter", default=os.environ.get("SFT_ADAPTER_PATH"))
+    parser.add_argument("--sft-adapter", default=os.environ.get("SFT_ADAPTER_PATH", str(SFT_ADAPTER_PATH)))
     parser.add_argument("--policy-checkpoint", default=os.environ.get("UNMASKING_POLICY_CHECKPOINT"))
     parser.add_argument("--dpo-policy-checkpoint", default=os.environ.get("DPO_POLICY_CHECKPOINT"))
     parser.add_argument("--policy-repo", default=os.environ.get("ML_RL_DLLM_REPO"))
     parser.add_argument("--hf-token", default=os.environ.get("HF_TOKEN"))
     parser.add_argument("--base-revision", default=os.environ.get("BASE_MODEL_REVISION", "main"))
     parser.add_argument("--dparallel-revision", default=os.environ.get("DPARALLEL_MODEL_REVISION", "main"))
+    parser.add_argument("--paper-policy-revision", default=os.environ.get("PAPER_POLICY_REVISION", "main"))
     parser.add_argument("--policy-temperature", type=float, default=0.5)
     parser.add_argument("--confidence-threshold", type=float, default=0.90)
     parser.add_argument("--entropy-threshold", type=float, default=0.50)
@@ -706,8 +755,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("provide --task-id, or both --method and --temperature")
     if args.method == "lora_sft" and not args.sft_adapter:
         parser.error("lora_sft requires SFT_ADAPTER_PATH or --sft-adapter")
-    if args.method == "paper_policy" and (not args.policy_checkpoint or not args.policy_repo):
-        parser.error("paper_policy requires UNMASKING_POLICY_CHECKPOINT and ML_RL_DLLM_REPO")
+    if args.method == "paper_policy" and not args.policy_repo:
+        parser.error("paper_policy requires ML_RL_DLLM_REPO")
     if args.method == "dpo_policy" and (not args.dpo_policy_checkpoint or not args.policy_repo):
         parser.error("dpo_policy requires DPO_POLICY_CHECKPOINT and ML_RL_DLLM_REPO")
     return args

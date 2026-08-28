@@ -20,7 +20,7 @@ class UnitySubmissionSmokeTest(unittest.TestCase):
                 """#!/usr/bin/env bash
 echo "$*" >> "$FAKE_PYTHON_CALLS"
 if [[ "${1:-}" == *seal_model_revisions.py ]]; then
-  echo base-revision-sha dparallel-revision-sha
+  echo base-revision-sha dparallel-revision-sha paper-policy-revision-sha
 elif [[ "${1:-}" == *is_cell_complete.py ]]; then
   exit 1
 fi
