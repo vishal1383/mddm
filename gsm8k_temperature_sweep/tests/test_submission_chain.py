@@ -25,8 +25,9 @@ class SubmissionChainTest(unittest.TestCase):
         self.assertEqual(offsets, sorted(offsets))
         self.assertNotIn("sbatch", script)
         self.assertIn("#SBATCH --partition=gpu-preempt", batch)
-        self.assertIn("#SBATCH --gpus=a100:1", batch)
+        self.assertIn("#SBATCH --gres=gpu:a100:1", batch)
         self.assertNotIn("#SBATCH --partition=cpu", batch)
+        self.assertNotIn("#SBATCH --qos=", batch)
 
 
 if __name__ == "__main__":
