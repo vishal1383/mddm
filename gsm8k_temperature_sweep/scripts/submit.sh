@@ -32,7 +32,7 @@ BASELINE_TABLE_JOB_ID="$(sbatch --parsable \
   --dependency="afterok:$BASELINE_ARRAY_JOB_ID" \
   --output="$MDDM_SWEEP_OUTPUT_ROOT/logs/table_baseline_%j.out" \
   --error="$MDDM_SWEEP_OUTPUT_ROOT/logs/table_baseline_%j.err" \
-  --export=ALL,MDDM_SWEEP_ALLOW_PARTIAL=1 \
+  --export=ALL,MDDM_SWEEP_ALLOW_PARTIAL=1,MDDM_SWEEP_TABLE_STEM=baseline_60_table \
   "$EXPERIMENT_ROOT/slurm/aggregate.sbatch")"
 DPO_TRAIN_JOB_ID="$(sbatch --parsable \
   --dependency="afterok:$BASELINE_TABLE_JOB_ID" \
@@ -53,7 +53,7 @@ FINAL_TABLE_JOB_ID="$(sbatch --parsable \
   --dependency="afterok:$DPO_ARRAY_JOB_ID" \
   --output="$MDDM_SWEEP_OUTPUT_ROOT/logs/table_final_%j.out" \
   --error="$MDDM_SWEEP_OUTPUT_ROOT/logs/table_final_%j.err" \
-  --export=ALL,MDDM_SWEEP_ALLOW_PARTIAL=0 \
+  --export=ALL,MDDM_SWEEP_ALLOW_PARTIAL=0,MDDM_SWEEP_TABLE_STEM=final_table \
   "$EXPERIMENT_ROOT/slurm/aggregate.sbatch")"
 
 echo "Submitted original 60-cell sweep: $BASELINE_ARRAY_JOB_ID"

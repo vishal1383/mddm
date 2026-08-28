@@ -16,4 +16,5 @@ ARGS=(--output-root "$MDDM_SWEEP_OUTPUT_ROOT")
 if [[ "${MDDM_SWEEP_ALLOW_PARTIAL:-0}" == "1" ]]; then
   ARGS+=(--allow-partial)
 fi
+ARGS+=(--table-stem "${MDDM_SWEEP_TABLE_STEM:-final_table}")
 "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/aggregate.py" "${ARGS[@]}"
