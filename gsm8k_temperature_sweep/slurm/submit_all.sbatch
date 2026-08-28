@@ -16,6 +16,11 @@ cd gsm8k_temperature_sweep
 export MDDM_SWEEP_STATE_ROOT="${MDDM_SWEEP_STATE_ROOT:-$PWD/.runtime}"
 export MDDM_SWEEP_OUTPUT_ROOT="${MDDM_SWEEP_OUTPUT_ROOT:-$PWD/final_results}"
 export PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
+export PIP_CACHE_DIR="$MDDM_SWEEP_STATE_ROOT/pip-cache"
+export TMPDIR="$MDDM_SWEEP_STATE_ROOT/tmp"
+export XDG_CACHE_HOME="$MDDM_SWEEP_STATE_ROOT/cache"
+export HF_HOME="$MDDM_SWEEP_STATE_ROOT/huggingface"
+mkdir -p "$PIP_CACHE_DIR" "$TMPDIR" "$XDG_CACHE_HOME" "$HF_HOME"
 
 bash scripts/bootstrap_env.sh
 export MDDM_SWEEP_VENV="$MDDM_SWEEP_STATE_ROOT/venv"
