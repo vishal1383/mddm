@@ -7,11 +7,12 @@
 #SBATCH --mem=160G
 #SBATCH --requeue
 #SBATCH --signal=B:USR1@120
-#SBATCH --output=final_results/manifests/slurm-%j.out
-#SBATCH --error=final_results/manifests/slurm-%j.err
+#SBATCH --output=gsm8k_temperature_sweep/final_results/manifests/slurm-%j.out
+#SBATCH --error=gsm8k_temperature_sweep/final_results/manifests/slurm-%j.err
 
 set -euo pipefail
 
+cd gsm8k_temperature_sweep
 export MDDM_SWEEP_STATE_ROOT="${MDDM_SWEEP_STATE_ROOT:-${SCRATCH:-$PWD/.runtime}}"
 export MDDM_SWEEP_OUTPUT_ROOT="${MDDM_SWEEP_OUTPUT_ROOT:-$PWD/final_results}"
 export PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
