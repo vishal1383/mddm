@@ -15,9 +15,10 @@ fi
 mkdir -p "$MDDM_SWEEP_OUTPUT_ROOT/logs"
 "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/preflight.py"
 
-ARRAY_LIMIT="${MDDM_SWEEP_ARRAY_LIMIT:-8}"
+ARRAY_LIMIT="${MDDM_SWEEP_ARRAY_LIMIT:-1}"
 ARRAY_JOB_ID="$(sbatch --parsable \
   --array="0-59%$ARRAY_LIMIT" \
+  --gpus="${MDDM_SWEEP_GPUS:-a100:1}" \
   --output="$MDDM_SWEEP_OUTPUT_ROOT/logs/%A_%a.out" \
   --error="$MDDM_SWEEP_OUTPUT_ROOT/logs/%A_%a.err" \
   --export=ALL \
