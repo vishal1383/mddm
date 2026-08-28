@@ -75,7 +75,7 @@ echo "Submitted job: $JOB_ID"
 tail -n 100 -F "final_results/manifests/slurm-${JOB_ID}.out" "final_results/manifests/slurm-${JOB_ID}.err"
 ```
 
-The controller bootstraps and validates the environment, then submits one autonomous dependency chain:
+The submitted job itself owns one A100 on `gpu-preempt`. It bootstraps and validates the environment, then runs every stage sequentially inside that single allocation—there are no nested `sbatch` calls:
 
 ```text
 60 original full-test cells (sequential)
@@ -85,34 +85,7 @@ The controller bootstraps and validates the environment, then submits one autono
   -> saved 72-row final table
 ```
 
-After pulling `mddm` on Unity:
-
-```bash
-cd gsm8k_temperature_sweep
-export MDDM_SWEEP_STATE_ROOT="${SCRATCH}/mddm-gsm8k-passk"
-export MDDM_SWEEP_OUTPUT_ROOT=/project/your_group/mddm-gsm8k-passk-results
-export SFT_ADAPTER_PATH=/project/your_group/checkpoints/gsm8k_lora/adapter-final
-export UNMASKING_POLICY_CHECKPOINT=/project/your_group/checkpoints/unmasking/checkpoint-XXXX/model.safetensors
-export HF_TOKEN=hf_...
-
-bash scripts/bootstrap_env.sh
-export MDDM_SWEEP_VENV="$MDDM_SWEEP_STATE_ROOT/venv"
-export ML_RL_DLLM_REPO="$MDDM_SWEEP_STATE_ROOT/ml-rl-dllm"
-bash scripts/submit.sh
-```
-
-`submit.sh` runs a filesystem/revision/task-matrix preflight and submits the complete dependency chain to `gpu-preempt`, capped at one active A100. All GPU work is sequential. Dependencies check process success only; there are no accuracy or throughput gates.
-
-The equivalent direct array command is:
-
-```bash
-sbatch --partition=gpu-preempt --array=0-59%1 --gpus=a100:1 \
-  --output="$MDDM_SWEEP_OUTPUT_ROOT/logs/%A_%a.out" \
-  --error="$MDDM_SWEEP_OUTPUT_ROOT/logs/%A_%a.err" \
-  --export=ALL slurm/sweep.sbatch
-```
-
-The direct array command above runs only the original 60 cells; use `slurm/submit_all.sbatch` for the autonomous DPO extension. Set `MDDM_SWEEP_ARRAY_LIMIT` or `MDDM_SWEEP_GPUS` only when intentionally overriding the one-A100 sequential default. Unity preempt jobs may be killed after their grace period, so evaluation records, DPO preference records, and DPO trainer state are resumable.
+`submit_all.sbatch` explicitly requests `--partition=gpu-preempt` and `--gpus=a100:1`. It has a 45-hour wall-time, receives `USR1` before preemption, saves atomic progress, and requeues the same job. On restart, valid completed cells are skipped without loading an 8B model; evaluation records, DPO preference records, DPO trainer state, and sealed model revisions are reused. There are no accuracy or throughput gates.
 
 ## Outputs
 

@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=gsm8k-passk-submit
-#SBATCH --partition=cpu
-#SBATCH --time=04:00:00
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
+#SBATCH --job-name=gsm8k-passk-a100
+#SBATCH --partition=gpu-preempt
+#SBATCH --qos=long
+#SBATCH --time=45:00:00
+#SBATCH --gpus=a100:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=160G
+#SBATCH --requeue
+#SBATCH --signal=B:USR1@120
 #SBATCH --output=final_results/manifests/slurm-%j.out
 #SBATCH --error=final_results/manifests/slurm-%j.err
 
@@ -23,4 +27,4 @@ bash "$EXPERIMENT_ROOT/scripts/bootstrap_env.sh"
 export MDDM_SWEEP_VENV="$MDDM_SWEEP_STATE_ROOT/venv"
 export ML_RL_DLLM_REPO="$MDDM_SWEEP_STATE_ROOT/ml-rl-dllm"
 
-bash "$EXPERIMENT_ROOT/scripts/submit.sh"
+exec bash "$EXPERIMENT_ROOT/scripts/run_sequential.sh"
