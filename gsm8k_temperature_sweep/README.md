@@ -55,6 +55,17 @@ accelerate launch --config_file configs/accelerate_configs/8gpu_ddp.yaml \
 
 ## Unity setup and launch
 
+Minimal single-entrypoint launch (after setting the three artifact/authentication variables):
+
+```bash
+mkdir -p final_results/manifests
+JOB_ID=$(sbatch --parsable slurm/submit_all.sbatch)
+echo "Submitted job: $JOB_ID"
+tail -n 100 -F "final_results/manifests/slurm-${JOB_ID}.out" "final_results/manifests/slurm-${JOB_ID}.err"
+```
+
+The controller bootstraps and validates the environment, then submits the complete GPU array and its dependent table job.
+
 After pulling `mddm` on Unity:
 
 ```bash
