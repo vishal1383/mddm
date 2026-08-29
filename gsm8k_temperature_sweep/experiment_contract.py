@@ -35,7 +35,7 @@ METHOD_LABELS = {
     "lora_sft": "Standard full-GSM8K LoRA SFT",
     "dpo_policy": "Offline-DPO unmasking policy",
 }
-TEMPERATURES = tuple(round(index / 10, 1) for index in range(1, 13))
+TEMPERATURES = (0.1, 0.8, 1.2)
 
 
 def task_matrix() -> tuple[tuple[str, float], ...]:

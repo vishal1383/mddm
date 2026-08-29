@@ -15,13 +15,13 @@ class SubmissionChainTest(unittest.TestCase):
         script = (root / "scripts/run_sequential.sh").read_text(encoding="utf-8")
         markers = (
             'Stage 1/5:',
-            'seq 0 59',
+            'seq 0 14',
             'Stage 2/5:',
-            'baseline_60_table',
+            'baseline_table',
             'Stage 3/5:',
             'train_dpo_policy.py',
             'Stage 4/5:',
-            'seq 60 71',
+            'seq 15 17',
             'Stage 5/5:',
             'final_table',
         )

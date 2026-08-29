@@ -145,7 +145,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--allow-partial", action="store_true")
-    parser.add_argument("--table-stem", choices=("final_table", "baseline_60_table"), default="final_table")
+    parser.add_argument("--table-stem", choices=("final_table", "baseline_table"), default="final_table")
     args = parser.parse_args(argv)
     root = Path(args.output_root).resolve()
     rows = collect(root, allow_partial=args.allow_partial)
@@ -153,7 +153,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     table_dir = root / "tables"
     atomic_text(table_dir / f"{args.table_stem}.csv", csv_text(rows))
     atomic_text(table_dir / f"{args.table_stem}.md", markdown_text(rows))
-    summary_name = "all_summaries.json" if args.table_stem == "final_table" else "baseline_60_all_summaries.json"
+    summary_name = "all_summaries.json" if args.table_stem == "final_table" else "baseline_all_summaries.json"
     atomic_text(table_dir / summary_name, json.dumps(rows, indent=2, sort_keys=True) + "\n")
     print(markdown_text(rows))
 

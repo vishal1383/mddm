@@ -1,6 +1,6 @@
 # Full GSM8K temperature and pass@k sweep
 
-This folder is a self-contained, resumable train-and-evaluate chain for six LLaDA-family methods on GSM8K. It first completes the original five-method table, then trains an offline-DPO version of Apple's unmasking policy on all 7,473 training examples, evaluates it on the complete official 1,319-example test split, and creates a final matched table over token temperatures `T = 0.1, 0.2, ..., 1.2`.
+This folder is a self-contained, resumable train-and-evaluate chain for six LLaDA-family methods on GSM8K. It first completes the five-method baseline table, then trains an offline-DPO version of Apple's unmasking policy on all 7,473 training examples, evaluates it on the complete official 1,319-example test split, and creates a final matched table at token temperatures `T = {0.1, 0.8, 1.2}`.
 
 ## Methods
 
@@ -31,11 +31,11 @@ The JSD row implements the pairwise-distribution variational update described by
 - `pass@10`: whether any of paths 0–9 is exact-match correct.
 - `Tok/NFE`: `sum(generated tokens) / sum(full model forwards)` over all ten paths and all examples.
 
-The original table is 5 methods × 12 temperatures × 1,319 examples × 10 paths = **791,400 complete trajectories**. The DPO evaluation adds 12 × 1,319 × 10 = **158,280 trajectories**, producing a 72-row final table. Every cell is a full run, not a screen or promotion gate.
+The baseline table is 5 methods × 3 temperatures × 1,319 examples × 10 paths = **197,850 complete trajectories**. The DPO evaluation adds 3 × 1,319 × 10 = **39,570 trajectories**, producing an 18-row final table. Every cell is a full run, not a screen or promotion gate.
 
 ## Offline-DPO policy
 
-The DPO baseline uses the paper's exact confidence-only, one-block DiT Bernoulli policy and keeps LLaDA fully frozen. After the original 60 rows finish, it collects four deterministic frozen-Base trajectories per training prompt using confidence thresholds `0.30, 0.50, 0.70, 0.90`. It ranks paths with the paper's multiplicative terminal reward:
+The DPO baseline uses the paper's exact confidence-only, one-block DiT Bernoulli policy and keeps LLaDA fully frozen. After the 15 baseline rows finish, it collects four deterministic frozen-Base trajectories per training prompt using confidence thresholds `0.30, 0.50, 0.70, 0.90`. It ranks paths with the paper's multiplicative terminal reward:
 
 ```text
 correct * ((L - min(NFE, L) + 1) / L) ** alpha
@@ -70,11 +70,11 @@ The submitted job itself owns one A100 on `gpu-preempt`. It bootstraps and valid
 No checkpoint-path exports are required. Hugging Face authentication uses the existing login/environment cache when needed.
 
 ```text
-60 original full-test cells (sequential)
-  -> saved 60-row table
+15 baseline full-test cells (sequential)
+  -> saved 15-row table
   -> full 7,473-example DPO collection and training
-  -> 12 DPO full-test cells (sequential)
-  -> saved 72-row final table
+  -> 3 DPO full-test cells (sequential)
+  -> saved 18-row final table
 ```
 
 `submit_all.sbatch` explicitly requests `--partition=gpu-preempt` and `--gres=gpu:a100:1`, with no separate QoS. It has a 45-hour wall-time, receives `USR1` before preemption, saves atomic progress, and requeues the same job. On restart, valid completed cells are skipped without loading an 8B model; evaluation records, DPO preference records, DPO trainer state, and sealed model revisions are reused. There are no accuracy or throughput gates.
@@ -90,12 +90,12 @@ $MDDM_SWEEP_OUTPUT_ROOT/
   lora_sft/T0.1/...
   dpo_policy/T0.1/...
   checkpoints/dpo_policy/{training_contract.json,training_manifest.json,model.safetensors,preferences/}
-  tables/{baseline_60_table.csv,baseline_60_table.md,baseline_60_all_summaries.json}
+  tables/{baseline_table.csv,baseline_table.md,baseline_all_summaries.json}
   tables/{final_table.csv,final_table.md,all_summaries.json}
   logs/
 ```
 
-Before running GPU work, the controller resolves Base, dParallel, and the paper-policy repository to immutable commit SHAs. Contracts also seal adapter/policy hashes, evaluator source, thresholds, geometry, prompt, and seed. The intermediate table contains the original 60 cells. Final aggregation fails if any of the 72 summaries is absent, malformed, or not a full 1,319-example result.
+Before running GPU work, the controller resolves Base, dParallel, and the paper-policy repository to immutable commit SHAs. Contracts also seal adapter/policy hashes, evaluator source, thresholds, geometry, prompt, and seed. The intermediate table contains 15 cells. Final aggregation fails if any of the 18 summaries is absent, malformed, or not a full 1,319-example result.
 
 For a manual table rebuild:
 
