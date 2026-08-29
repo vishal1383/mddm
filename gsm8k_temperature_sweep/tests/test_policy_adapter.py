@@ -18,15 +18,13 @@ POLICY_REPO = os.environ.get("ML_RL_DLLM_REPO")
 @unittest.skipIf(torch is None, "PyTorch is installed by the Unity bootstrap, not system Python")
 @unittest.skipUnless(POLICY_REPO and Path(POLICY_REPO).is_dir(), "set ML_RL_DLLM_REPO to test the upstream adapter")
 class PolicyAdapterTest(unittest.TestCase):
-    def test_official_bl32_checkpoint_round_trip(self) -> None:
+    @staticmethod
+    def _wrapper(architecture):
         import sys
 
         sys.path.insert(0, str(Path(POLICY_REPO).resolve()))
         from common.models.policy import DiTConfidencePolicy, PolicyHFWrapper
-        from evaluate import PAPER_POLICY_ARCHITECTURE, load_policy
-        from safetensors.torch import save_file
 
-        architecture = PAPER_POLICY_ARCHITECTURE
         core = DiTConfidencePolicy(
             hidden_dim=architecture["hidden_dim"],
             feedforward_dim=architecture["feedforward_dim"],
@@ -38,7 +36,14 @@ class PolicyAdapterTest(unittest.TestCase):
             num_blocks=architecture["num_blocks"],
             time_period=architecture["time_period"],
         )
-        wrapper = PolicyHFWrapper(core, "dit_confidence")
+        return PolicyHFWrapper(core, "dit_confidence")
+
+    def test_official_bl32_checkpoint_round_trip(self) -> None:
+        from evaluate import PAPER_POLICY_ARCHITECTURE, load_policy
+        from safetensors.torch import save_file
+
+        architecture = PAPER_POLICY_ARCHITECTURE
+        wrapper = self._wrapper(architecture)
         with tempfile.TemporaryDirectory() as temporary:
             checkpoint = Path(temporary) / "model.safetensors"
             save_file(wrapper.state_dict(), str(checkpoint))
@@ -57,6 +62,32 @@ class PolicyAdapterTest(unittest.TestCase):
         )
         self.assertEqual(tuple(output.shape), (2, 32))
         self.assertEqual(len(receipt["sha256"]), 64)
+
+    def test_contextual_top8_dpo_checkpoint_round_trip(self) -> None:
+        from evaluate import DPO_POLICY_ARCHITECTURE, load_policy
+        from safetensors.torch import save_file
+
+        architecture = DPO_POLICY_ARCHITECTURE
+        wrapper = self._wrapper(architecture)
+        with tempfile.TemporaryDirectory() as temporary:
+            checkpoint = Path(temporary) / "model.safetensors"
+            save_file(wrapper.state_dict(), str(checkpoint))
+            loaded, _receipt = load_policy(
+                SimpleNamespace(
+                    method="dpo_policy_v2",
+                    policy_repo=POLICY_REPO,
+                    resolved_policy_architecture=architecture,
+                    resolved_policy_checkpoint=checkpoint,
+                    resolved_policy_checkpoint_receipt={"sha256": "fixture"},
+                ),
+                torch.device("cpu"),
+            )
+        output = loaded(
+            torch.ones((2, 32), dtype=torch.bool),
+            torch.full((2, 32, 8), 0.1),
+            torch.zeros((2, 1)),
+        )
+        self.assertEqual(tuple(output.shape), (2, 32))
 
 
 if __name__ == "__main__":

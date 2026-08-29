@@ -11,7 +11,7 @@ This folder is a self-contained, resumable train-and-evaluate chain for six LLaD
 | `dparallel` | [dParallel: Learnable Parallel Decoding for dLLMs](https://arxiv.org/abs/2509.26488) | `Zigeng/dParallel-LLaDA-8B-instruct` |
 | `paper_policy` | [Learning Unmasking Policies for Diffusion Language Models](https://arxiv.org/abs/2512.09106) | Frozen Base plus `orkunkinay/ml-rl-dllm-gs8` checkpoint 14972 from Hugging Face |
 | `lora_sft` | Standard full-GSM8K LoRA SFT | Frozen Base plus the exact adapter bundled under `artifacts/gsm8k_lora_sft` |
-| `dpo_policy` | Offline trajectory-DPO unmasking policy | Frozen Base plus a newly trained Apple-architecture policy head |
+| `dpo_policy_v2` | Pure Base-DPO top-8 contextual policy | Frozen Base plus a new two-block policy head trained only from Base trajectories |
 
 The JSD row implements the pairwise-distribution variational update described by [Mean-Field Parallel Decoding for Discrete Diffusion Language Models](https://arxiv.org/abs/2606.15805), using the exact selector already developed in this repository.
 
@@ -45,7 +45,7 @@ Every strict within-prompt reward ordering becomes an offline preference pair. T
 
 ## Artifact resolution
 
-No checkpoint-path exports are required. Base and dParallel are downloaded from their Hugging Face repositories. The public Apple-method policy artifact is downloaded from `orkunkinay/ml-rl-dllm-gs8/checkpoint-14972/model.safetensors`. The exact standard-LoRA adapter used by the existing mddm full256 baseline is committed inside this standalone folder. DPO starts from frozen Base and writes its own resumable checkpoint under `final_results/checkpoints/dpo_policy`.
+No checkpoint-path exports are required. Base and dParallel are downloaded from their Hugging Face repositories. The public Apple-method policy artifact is downloaded from `orkunkinay/ml-rl-dllm-gs8/checkpoint-14972/model.safetensors`. The exact standard-LoRA adapter used by the existing mddm full256 baseline is committed inside this standalone folder. Pure DPO v2 starts from frozen Base, collects ten Base-only behavior paths per training prompt (four confidence thresholds and six fixed wave sizes), warm-starts its reference on the fastest correct path, and then fits correctness-first safety and efficiency preferences. It writes its own resumable artifacts under `final_results/checkpoints/dpo_policy_v2`. It imports no JSD or dParallel selector signal.
 
 ## Unity setup and launch
 
@@ -88,8 +88,8 @@ $MDDM_SWEEP_OUTPUT_ROOT/
   dparallel/T0.1/...
   paper_policy/T0.1/...
   lora_sft/T0.1/...
-  dpo_policy/T0.1/...
-  checkpoints/dpo_policy/{training_contract.json,training_manifest.json,model.safetensors,preferences/}
+  dpo_policy_v2/T0.1/...
+  checkpoints/dpo_policy_v2/{training_contract.json,training_manifest.json,model.safetensors,winner_bc_reference.safetensors,preferences/}
   tables/{baseline_table.csv,baseline_table.md,baseline_all_summaries.json}
   tables/{final_table.csv,final_table.md,all_summaries.json}
   logs/

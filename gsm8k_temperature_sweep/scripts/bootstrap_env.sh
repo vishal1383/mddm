@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXPERIMENT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 STATE_ROOT="${MDDM_SWEEP_STATE_ROOT:-${SCRATCH:-$EXPERIMENT_ROOT/.runtime}}"
 VENV_PATH="${MDDM_SWEEP_VENV:-$STATE_ROOT/venv}"
-POLICY_REPO="${ML_RL_DLLM_REPO:-$STATE_ROOT/ml-rl-dllm}"
+POLICY_REPO="${ML_RL_DLLM_REPO:-$STATE_ROOT/ml-rl-dllm-35e4830485f1}"
 PYTHON_BIN="${PYTHON_BIN:-python3.12}"
 POLICY_COMMIT="35e4830485f1821d57f9ac3f1a303f3d4531fb82"
 
@@ -18,13 +18,22 @@ fi
 if [[ ! -x "$VENV_PATH/bin/python" ]]; then
   "$PYTHON_BIN" -m venv "$VENV_PATH"
 fi
-"$VENV_PATH/bin/python" -m pip install --upgrade pip wheel setuptools
-"$VENV_PATH/bin/python" -m pip install -r "$EXPERIMENT_ROOT/requirements.txt"
+REQUIREMENTS_SHA256="$(sha256sum "$EXPERIMENT_ROOT/requirements.txt" | awk '{print $1}')"
+REQUIREMENTS_STAMP="$VENV_PATH/.mddm-requirements-sha256"
+if [[ ! -f "$REQUIREMENTS_STAMP" ]] || [[ "$(<"$REQUIREMENTS_STAMP")" != "$REQUIREMENTS_SHA256" ]]; then
+  "$VENV_PATH/bin/python" -m pip install --upgrade pip wheel setuptools
+  "$VENV_PATH/bin/python" -m pip install -r "$EXPERIMENT_ROOT/requirements.txt"
+  printf '%s\n' "$REQUIREMENTS_SHA256" > "$REQUIREMENTS_STAMP"
+else
+  echo "Reusing validated project-local Python environment: $VENV_PATH"
+fi
 
 if [[ ! -d "$POLICY_REPO/.git" ]]; then
   git clone https://github.com/apple/ml-rl-dllm.git "$POLICY_REPO"
 fi
-git -C "$POLICY_REPO" fetch origin "$POLICY_COMMIT"
+if ! git -C "$POLICY_REPO" cat-file -e "$POLICY_COMMIT^{commit}" 2>/dev/null; then
+  git -C "$POLICY_REPO" fetch origin "$POLICY_COMMIT"
+fi
 if [[ -n "$(git -C "$POLICY_REPO" status --porcelain --untracked-files=no)" ]]; then
   echo "Refusing to alter tracked changes in upstream checkout: $POLICY_REPO" >&2
   exit 2
