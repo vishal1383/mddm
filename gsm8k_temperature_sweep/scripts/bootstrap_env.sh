@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXPERIMENT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -24,8 +25,8 @@ if [[ ! -d "$POLICY_REPO/.git" ]]; then
   git clone https://github.com/apple/ml-rl-dllm.git "$POLICY_REPO"
 fi
 git -C "$POLICY_REPO" fetch origin "$POLICY_COMMIT"
-if [[ -n "$(git -C "$POLICY_REPO" status --porcelain)" ]]; then
-  echo "Refusing to alter dirty upstream checkout: $POLICY_REPO" >&2
+if [[ -n "$(git -C "$POLICY_REPO" status --porcelain --untracked-files=no)" ]]; then
+  echo "Refusing to alter tracked changes in upstream checkout: $POLICY_REPO" >&2
   exit 2
 fi
 git -C "$POLICY_REPO" switch --detach "$POLICY_COMMIT"

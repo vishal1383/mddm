@@ -40,6 +40,9 @@ class SubmissionChainTest(unittest.TestCase):
         self.assertIn('PIP_CACHE_DIR="$MDDM_SWEEP_STATE_ROOT/pip-cache"', batch)
         self.assertIn('TMPDIR="$MDDM_SWEEP_STATE_ROOT/tmp"', batch)
         self.assertIn('HF_HOME="$MDDM_SWEEP_STATE_ROOT/huggingface"', batch)
+        self.assertIn("PYTHONDONTWRITEBYTECODE=1", batch)
+        bootstrap = (root / "scripts/bootstrap_env.sh").read_text(encoding="utf-8")
+        self.assertIn("status --porcelain --untracked-files=no", bootstrap)
         self.assertIn(
             "#SBATCH --output=gsm8k_temperature_sweep/final_results/manifests/slurm-%j.out",
             batch,
