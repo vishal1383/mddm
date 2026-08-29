@@ -8,7 +8,7 @@ import unittest
 
 
 class UnitySubmissionSmokeTest(unittest.TestCase):
-    def test_in_allocation_launcher_executes_all_72_cells_in_order(self) -> None:
+    def test_in_allocation_launcher_executes_all_18_cells_in_order(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temporary_value:
             temporary = Path(temporary_value)
@@ -48,7 +48,7 @@ exit 0
 
         eval_calls = [call for call in calls if "/evaluate.py " in call]
         task_ids = [int(call.split("--task-id ", 1)[1].split()[0]) for call in eval_calls]
-        self.assertEqual(task_ids, list(range(72)))
+        self.assertEqual(task_ids, list(range(18)))
         self.assertEqual(sum("/train_dpo_policy.py " in call for call in calls), 1)
         self.assertEqual(sum("/aggregate.py " in call for call in calls), 2)
         self.assertIn("Stage 1/5", completed.stdout)

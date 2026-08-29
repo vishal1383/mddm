@@ -69,26 +69,26 @@ run_eval_cell() {
     --task-id "$task_id" --output-root "$MDDM_SWEEP_OUTPUT_ROOT"
 }
 
-echo "Stage 1/5: original 60 full-test cells on one A100, sequentially."
-for task_id in $(seq 0 59); do
+echo "Stage 1/5: 15 baseline full-test cells on one A100, sequentially."
+for task_id in $(seq 0 14); do
   run_eval_cell "$task_id"
 done
 
-echo "Stage 2/5: preserve the original 60-row table."
+echo "Stage 2/5: preserve the 15-row baseline table."
 run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/aggregate.py" \
-  --output-root "$MDDM_SWEEP_OUTPUT_ROOT" --allow-partial --table-stem baseline_60_table
+  --output-root "$MDDM_SWEEP_OUTPUT_ROOT" --allow-partial --table-stem baseline_table
 
 echo "Stage 3/5: full 7,473-example offline-DPO collection and training."
 run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/train_dpo_policy.py" \
   --output-dir "$(dirname "$DPO_POLICY_CHECKPOINT")"
 run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/preflight.py" --require-dpo
 
-echo "Stage 4/5: 12 DPO full-test cells on the same A100, sequentially."
-for task_id in $(seq 60 71); do
+echo "Stage 4/5: 3 DPO full-test cells on the same A100, sequentially."
+for task_id in $(seq 15 17); do
   run_eval_cell "$task_id"
 done
 
-echo "Stage 5/5: fail-closed final 72-row table."
+echo "Stage 5/5: fail-closed final 18-row table."
 run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/aggregate.py" \
   --output-root "$MDDM_SWEEP_OUTPUT_ROOT" --table-stem final_table
 
