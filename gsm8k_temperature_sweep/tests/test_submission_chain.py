@@ -43,6 +43,10 @@ class SubmissionChainTest(unittest.TestCase):
         self.assertIn("PYTHONDONTWRITEBYTECODE=1", batch)
         bootstrap = (root / "scripts/bootstrap_env.sh").read_text(encoding="utf-8")
         self.assertIn("status --porcelain --untracked-files=no", bootstrap)
+        self.assertIn(".mddm-requirements-sha256", bootstrap)
+        self.assertIn("cat-file -e", bootstrap)
+        self.assertIn("ml-rl-dllm-35e4830485f1", bootstrap)
+        self.assertTrue((root / "final_results/manifests/.gitkeep").is_file())
         self.assertIn(
             "#SBATCH --output=gsm8k_temperature_sweep/final_results/manifests/slurm-%j.out",
             batch,

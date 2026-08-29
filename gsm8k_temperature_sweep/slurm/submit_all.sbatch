@@ -25,6 +25,6 @@ mkdir -p "$PIP_CACHE_DIR" "$TMPDIR" "$XDG_CACHE_HOME" "$HF_HOME"
 
 bash scripts/bootstrap_env.sh
 export MDDM_SWEEP_VENV="$MDDM_SWEEP_STATE_ROOT/venv"
-export ML_RL_DLLM_REPO="$MDDM_SWEEP_STATE_ROOT/ml-rl-dllm"
+export ML_RL_DLLM_REPO="$MDDM_SWEEP_STATE_ROOT/ml-rl-dllm-35e4830485f1"
 
 exec bash scripts/run_sequential.sh

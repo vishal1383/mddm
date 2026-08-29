@@ -21,6 +21,30 @@ from experiment_contract import (
 
 
 class ContractTest(unittest.TestCase):
+    def test_only_source_hash_changes_can_resume_a_legacy_baseline(self) -> None:
+        from experiment_contract import resume_compatible_contract
+
+        existing = {
+            "method": "base",
+            "temperature": 0.1,
+            "samples": 10,
+            "evaluator_sources_sha256": {"evaluate.py": "old"},
+            "contract_sha256": "old-contract",
+        }
+        current = {
+            **existing,
+            "evaluator_sources_sha256": {"evaluate.py": "new"},
+            "contract_sha256": "new-contract",
+        }
+        self.assertTrue(resume_compatible_contract(existing, current))
+        self.assertFalse(resume_compatible_contract(existing, {**current, "samples": 5}))
+        self.assertFalse(
+            resume_compatible_contract(
+                {**existing, "method": "dpo_policy_v2"},
+                {**current, "method": "dpo_policy_v2"},
+            )
+        )
+
     def test_task_matrix_is_complete_and_stable(self) -> None:
         matrix = task_matrix()
         self.assertEqual(TEMPERATURES, (0.1, 0.8, 1.2))
