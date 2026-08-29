@@ -20,6 +20,7 @@ export PIP_CACHE_DIR="$MDDM_SWEEP_STATE_ROOT/pip-cache"
 export TMPDIR="$MDDM_SWEEP_STATE_ROOT/tmp"
 export XDG_CACHE_HOME="$MDDM_SWEEP_STATE_ROOT/cache"
 export HF_HOME="$MDDM_SWEEP_STATE_ROOT/huggingface"
+export PYTHONDONTWRITEBYTECODE=1
 mkdir -p "$PIP_CACHE_DIR" "$TMPDIR" "$XDG_CACHE_HOME" "$HF_HOME"
 
 bash scripts/bootstrap_env.sh
