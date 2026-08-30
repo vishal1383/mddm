@@ -7,7 +7,7 @@ STATE_ROOT="${MDDM_SWEEP_STATE_ROOT:-${SCRATCH:-$EXPERIMENT_ROOT/.runtime}}"
 export MDDM_SWEEP_VENV="${MDDM_SWEEP_VENV:-$STATE_ROOT/venv}"
 export ML_RL_DLLM_REPO="${ML_RL_DLLM_REPO:-$STATE_ROOT/ml-rl-dllm-35e4830485f1}"
 export MDDM_SWEEP_OUTPUT_ROOT="${MDDM_SWEEP_OUTPUT_ROOT:-$EXPERIMENT_ROOT/final_results}"
-export DPO_POLICY_CHECKPOINT="$MDDM_SWEEP_OUTPUT_ROOT/checkpoints/dpo_policy_v2/model.safetensors"
+export DPO_POLICY_CHECKPOINT="$MDDM_SWEEP_OUTPUT_ROOT/checkpoints/dpo_policy_v3/model.safetensors"
 export HF_HOME="${HF_HOME:-$STATE_ROOT/huggingface}"
 export TOKENIZERS_PARALLELISM=false
 
@@ -78,7 +78,7 @@ echo "Stage 2/5: preserve the 15-row baseline table."
 run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/aggregate.py" \
   --output-root "$MDDM_SWEEP_OUTPUT_ROOT" --allow-partial --table-stem baseline_table
 
-echo "Stage 3/5: full 7,473-example offline-DPO collection and training."
+echo "Stage 3/5: full 7,473-example online hidden-state trajectory-DPO training."
 run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/train_dpo_policy.py" \
   --output-dir "$(dirname "$DPO_POLICY_CHECKPOINT")"
 run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/preflight.py" --require-dpo

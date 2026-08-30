@@ -25,7 +25,7 @@ METHODS = (
     "dparallel",
     "paper_policy",
     "lora_sft",
-    "dpo_policy_v2",
+    "dpo_policy_v3",
 )
 METHOD_LABELS = {
     "base": "Frozen Base confidence decoder",
@@ -33,7 +33,7 @@ METHOD_LABELS = {
     "dparallel": "dParallel",
     "paper_policy": "Learning Unmasking Policies",
     "lora_sft": "Standard full-GSM8K LoRA SFT",
-    "dpo_policy_v2": "Pure Base-DPO top-8 contextual policy",
+    "dpo_policy_v3": "Hidden-state select-then-sample DPO policy",
 }
 TEMPERATURES = (0.1, 0.8, 1.2)
 
@@ -63,7 +63,7 @@ def canonical_sha256(value: Any) -> str:
 def resume_compatible_contract(existing: dict[str, Any], current: dict[str, Any]) -> bool:
     """Allow partial legacy baselines to resume after DPO-only source edits."""
 
-    if existing.get("method") == "dpo_policy_v2" or current.get("method") == "dpo_policy_v2":
+    if existing.get("method") == "dpo_policy_v3" or current.get("method") == "dpo_policy_v3":
         return False
     ignored = {"contract_sha256", "evaluator_sources_sha256"}
     old_semantics = {key: value for key, value in existing.items() if key not in ignored}

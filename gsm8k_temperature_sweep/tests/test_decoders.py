@@ -16,24 +16,28 @@ class DecoderTransitionTest(unittest.TestCase):
         class Output:
             def __init__(self, logits):
                 self.logits = logits
+                self.hidden_states = (torch.ones((*logits.shape[:2], 4), device=logits.device),)
 
         class Model:
-            def __call__(self, input_ids, use_cache=False):
+            def __call__(self, input_ids, use_cache=False, output_hidden_states=False):
                 logits = torch.zeros((*input_ids.shape, 11), device=input_ids.device)
                 logits[..., 2] = 12.0
                 return Output(logits)
 
         class Policy:
-            def __call__(self, masked, confidence, timestep):
+            def project_hidden(self, hidden):
+                return hidden
+
+            def __call__(self, masked, features, timestep):
                 return torch.full(masked.shape, 20.0, device=masked.device)
 
-        for method in ("base", "jsd_mean_field", "dparallel", "paper_policy", "lora_sft", "dpo_policy_v2"):
+        for method in ("base", "jsd_mean_field", "dparallel", "paper_policy", "lora_sft", "dpo_policy_v3"):
             with self.subTest(method=method):
                 result = decode_batch(
                     Model(),
                     [1],
                     method=method,
-                    policy=Policy() if method in {"paper_policy", "dpo_policy_v2"} else None,
+                    policy=Policy() if method in {"paper_policy", "dpo_policy_v3"} else None,
                     temperature=0.5,
                     policy_temperature=0.5,
                     confidence_threshold=0.9,

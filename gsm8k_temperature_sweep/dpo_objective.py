@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Sequence
 
 
-DPO_SCHEMA_VERSION = "gsm8k_unmasking_dpo_v2"
+DPO_SCHEMA_VERSION = "gsm8k_unmasking_dpo_v3"
 
 
 def frontier_preference_pairs(
