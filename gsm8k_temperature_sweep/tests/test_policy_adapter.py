@@ -63,18 +63,18 @@ class PolicyAdapterTest(unittest.TestCase):
         self.assertEqual(tuple(output.shape), (2, 32))
         self.assertEqual(len(receipt["sha256"]), 64)
 
-    def test_contextual_top8_dpo_checkpoint_round_trip(self) -> None:
-        from evaluate import DPO_POLICY_ARCHITECTURE, load_policy
+    def test_hidden_state_dpo_checkpoint_round_trip(self) -> None:
+        from evaluate import DPO_POLICY_ARCHITECTURE, ProjectedHiddenSetPolicy, load_policy
         from safetensors.torch import save_file
 
-        architecture = DPO_POLICY_ARCHITECTURE
-        wrapper = self._wrapper(architecture)
+        architecture = {**DPO_POLICY_ARCHITECTURE, "base_hidden_dim": 16}
+        wrapper = ProjectedHiddenSetPolicy(architecture)
         with tempfile.TemporaryDirectory() as temporary:
             checkpoint = Path(temporary) / "model.safetensors"
             save_file(wrapper.state_dict(), str(checkpoint))
             loaded, _receipt = load_policy(
                 SimpleNamespace(
-                    method="dpo_policy_v2",
+                    method="dpo_policy_v3",
                     policy_repo=POLICY_REPO,
                     resolved_policy_architecture=architecture,
                     resolved_policy_checkpoint=checkpoint,
@@ -82,9 +82,10 @@ class PolicyAdapterTest(unittest.TestCase):
                 ),
                 torch.device("cpu"),
             )
+        projected = loaded.project_hidden(torch.ones((2, 32, 16)))
         output = loaded(
             torch.ones((2, 32), dtype=torch.bool),
-            torch.full((2, 32, 8), 0.1),
+            projected,
             torch.zeros((2, 1)),
         )
         self.assertEqual(tuple(output.shape), (2, 32))

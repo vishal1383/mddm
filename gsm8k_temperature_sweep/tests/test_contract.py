@@ -40,8 +40,8 @@ class ContractTest(unittest.TestCase):
         self.assertFalse(resume_compatible_contract(existing, {**current, "samples": 5}))
         self.assertFalse(
             resume_compatible_contract(
-                {**existing, "method": "dpo_policy_v2"},
-                {**current, "method": "dpo_policy_v2"},
+                {**existing, "method": "dpo_policy_v3"},
+                {**current, "method": "dpo_policy_v3"},
             )
         )
 

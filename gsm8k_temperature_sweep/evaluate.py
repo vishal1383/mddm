@@ -15,6 +15,7 @@ from typing import Any, Sequence
 import subprocess
 
 import torch
+from torch import nn
 
 from answers import extract_gsm8k_answer
 from artifact_sources import (
@@ -62,19 +63,75 @@ PAPER_POLICY_ARCHITECTURE = {
     "full_context": True,
 }
 DPO_POLICY_ARCHITECTURE = {
-    "policy_type": "dit_confidence",
-    "hidden_dim": 192,
-    "feedforward_dim": 768,
+    "policy_type": "projected_hidden_set",
+    "base_hidden_dim": 4096,
+    "projection_dim": 128,
+    "hidden_dim": 128,
+    "feedforward_dim": 512,
     "num_heads": 4,
     "dropout": 0.0,
-    "time_embed_dim": 192,
-    "confidences_top_p": 8,
     "smart_init": -1.5,
     "num_blocks": 2,
-    "time_period": 1,
+    "projection_seed": 104729,
     "full_context": True,
+    "selector_inputs": "frozen_base_final_hidden_state_mask_and_timestep_only",
 }
-POLICY_METHODS = {"paper_policy", "dpo_policy_v2"}
+POLICY_METHODS = {"paper_policy", "dpo_policy_v3"}
+DPO_POLICY_TEMPERATURE = 1.0
+
+
+class ProjectedHiddenSetPolicy(nn.Module):
+    """Lightweight set selector over a fixed projection of frozen Base states."""
+
+    def __init__(self, architecture: dict[str, Any]):
+        super().__init__()
+        base_dim = int(architecture["base_hidden_dim"])
+        projection_dim = int(architecture["projection_dim"])
+        hidden_dim = int(architecture["hidden_dim"])
+        if projection_dim != hidden_dim:
+            raise ValueError("projected-hidden v3 requires projection_dim == hidden_dim")
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(int(architecture["projection_seed"]))
+        projection = torch.randn(base_dim, projection_dim, generator=generator) / math.sqrt(base_dim)
+        self.register_buffer("hidden_projection", projection, persistent=True)
+        self.mask_embedding = nn.Embedding(2, hidden_dim)
+        self.time_mlp = nn.Sequential(nn.Linear(1, hidden_dim), nn.SiLU(), nn.Linear(hidden_dim, hidden_dim))
+        layer = nn.TransformerEncoderLayer(
+            d_model=hidden_dim,
+            nhead=int(architecture["num_heads"]),
+            dim_feedforward=int(architecture["feedforward_dim"]),
+            dropout=float(architecture["dropout"]),
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.context = nn.TransformerEncoder(layer, num_layers=int(architecture["num_blocks"]))
+        self.final_norm = nn.LayerNorm(hidden_dim)
+        self.output_proj = nn.Linear(hidden_dim, 1)
+        with torch.no_grad():
+            self.output_proj.weight.zero_()
+            self.output_proj.bias.fill_(float(architecture["smart_init"]))
+
+    def project_hidden(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        if hidden_states.shape[-1] != self.hidden_projection.shape[0]:
+            raise ValueError(
+                f"expected Base hidden size {self.hidden_projection.shape[0]}, found {hidden_states.shape[-1]}"
+            )
+        normalized = torch.nn.functional.layer_norm(
+            hidden_states.detach().float(), (hidden_states.shape[-1],)
+        )
+        return normalized @ self.hidden_projection
+
+    def forward(
+        self, masked: torch.Tensor, projected_hidden: torch.Tensor, timestep: torch.Tensor
+    ) -> torch.Tensor:
+        if projected_hidden.ndim != 3 or projected_hidden.shape[:2] != masked.shape:
+            raise ValueError("projected hidden states must have shape [batch, length, width]")
+        if timestep.shape != (masked.shape[0], 1):
+            raise ValueError("timestep must have shape [batch, 1]")
+        conditioning = self.mask_embedding(masked.long()) + self.time_mlp(timestep.float()).unsqueeze(1)
+        states = self.context(projected_hidden.float() + conditioning)
+        return self.output_proj(self.final_norm(states)).squeeze(-1)
 
 
 def atomic_json(path: Path, value: Any) -> None:
@@ -199,10 +256,43 @@ def sample_active_tokens(
     return tokens, top_confidence
 
 
+def sample_committed_tokens(
+    logits: torch.Tensor,
+    commit_sets: Sequence[tuple[int, ...]],
+    temperature: float,
+    *,
+    example_index: int,
+    trajectory_ids: Sequence[int],
+    prior_nfe: Sequence[int],
+    master_seed: int,
+    mask_token_id: int,
+) -> torch.Tensor:
+    """Sample only after a logit-free policy has fixed each commit set."""
+
+    tokens = torch.full(logits.shape[:2], int(mask_token_id), dtype=torch.long, device=logits.device)
+    for local_row, commit_set in enumerate(commit_sets):
+        positions = torch.tensor(commit_set, dtype=torch.long, device=logits.device)
+        local = logits[local_row, positions].detach().float().clone()
+        local[:, int(mask_token_id)] = -torch.inf
+        generator = torch.Generator(device=logits.device)
+        generator.manual_seed(
+            stable_seed(
+                master_seed,
+                example_index,
+                int(trajectory_ids[local_row]),
+                int(prior_nfe[local_row]),
+                "token",
+            )
+        )
+        selected = torch.multinomial((local / float(temperature)).softmax(dim=-1), 1, generator=generator)
+        tokens[local_row, positions] = selected.squeeze(-1)
+    return tokens
+
+
 def policy_positions(
     policy,
     canvas: torch.Tensor,
-    confidence_features: torch.Tensor,
+    policy_features: torch.Tensor,
     active: torch.Tensor,
     prior_nfe: Sequence[int],
     trajectory_ids: Sequence[int],
@@ -213,13 +303,13 @@ def policy_positions(
     mask_token_id: int,
 ) -> list[tuple[int, ...]]:
     masked = canvas.eq(int(mask_token_id))
-    if confidence_features.ndim != 3 or confidence_features.shape[:2] != canvas.shape:
-        raise ValueError("policy confidence features must have shape [batch, length, width]")
+    if policy_features.ndim != 3 or policy_features.shape[:2] != canvas.shape:
+        raise ValueError("policy features must have shape [batch, length, width]")
     timestep = (
-        torch.tensor(prior_nfe, device=canvas.device, dtype=confidence_features.dtype).unsqueeze(-1)
+        torch.tensor(prior_nfe, device=canvas.device, dtype=policy_features.dtype).unsqueeze(-1)
         / CANVAS_LENGTH
     )
-    logits = policy(masked, confidence_features, timestep).float() / float(policy_temperature)
+    logits = policy(masked, policy_features, timestep).float() / float(policy_temperature)
     result: list[tuple[int, ...]] = []
     for row in range(canvas.shape[0]):
         generator = torch.Generator(device=canvas.device)
@@ -266,7 +356,11 @@ def decode_batch(
         inputs = torch.cat([prompt.expand(len(rows), -1), current], dim=1)
         sync(device)
         base_started = perf_counter()
-        output = model(input_ids=inputs, use_cache=False)
+        output = model(
+            input_ids=inputs,
+            use_cache=False,
+            output_hidden_states=method == "dpo_policy_v3",
+        )
         sync(device)
         base_seconds += perf_counter() - base_started
         logits = output.logits[:, -canvas_length:].detach()
@@ -274,18 +368,22 @@ def decode_batch(
         active = active_block_mask(current, mask_token_id, block_length)
         global_rows = [int(value) for value in rows.tolist()]
         prior = [nfe[value] for value in global_rows]
-        selected_tokens, top_confidence = sample_active_tokens(
-            logits,
-            active,
-            temperature,
-            example_index=example_index,
-            trajectory_ids=global_rows,
-            prior_nfe=prior,
-            master_seed=seed,
-            mask_token_id=mask_token_id,
-        )
+        selected_tokens = None
+        top_confidence = None
+        if method != "dpo_policy_v3":
+            selected_tokens, top_confidence = sample_active_tokens(
+                logits,
+                active,
+                temperature,
+                example_index=example_index,
+                trajectory_ids=global_rows,
+                prior_nfe=prior,
+                master_seed=seed,
+                mask_token_id=mask_token_id,
+            )
         commit_sets: list[tuple[int, ...]] = []
         if method in {"base", "lora_sft", "jsd_mean_field"}:
+            assert top_confidence is not None
             # Position confidence comes from the clean current top-1, exactly
             # as in standard confidence decoding. Temperature changes the
             # committed token draw, not which confidence statistic is gated.
@@ -320,18 +418,19 @@ def decode_batch(
         elif method in POLICY_METHODS:
             if policy is None:
                 raise ValueError(f"{method} requires a loaded policy")
-            clean = logits.float().clone()
-            clean[..., int(mask_token_id)] = -torch.inf
-            architecture = (
-                DPO_POLICY_ARCHITECTURE if method == "dpo_policy_v2" else PAPER_POLICY_ARCHITECTURE
-            )
-            feature_width = int(architecture["confidences_top_p"])
-            top_values = clean.topk(feature_width, dim=-1).values
-            confidence_features = (top_values - clean.logsumexp(dim=-1, keepdim=True)).exp()
+            if method == "dpo_policy_v3":
+                if not getattr(output, "hidden_states", None):
+                    raise RuntimeError("Base did not return hidden states for the logit-free selector")
+                policy_features = policy.project_hidden(output.hidden_states[-1][:, -canvas_length:])
+            else:
+                clean = logits.float().clone()
+                clean[..., int(mask_token_id)] = -torch.inf
+                maximum = clean.max(dim=-1).values
+                policy_features = (maximum - clean.logsumexp(dim=-1)).exp().unsqueeze(-1)
             commit_sets = policy_positions(
                 policy,
                 current,
-                confidence_features,
+                policy_features,
                 active,
                 prior,
                 global_rows,
@@ -340,9 +439,22 @@ def decode_batch(
                 master_seed=seed,
                 mask_token_id=mask_token_id,
             )
+            if method == "dpo_policy_v3":
+                selected_tokens = sample_committed_tokens(
+                    logits,
+                    commit_sets,
+                    temperature,
+                    example_index=example_index,
+                    trajectory_ids=global_rows,
+                    prior_nfe=prior,
+                    master_seed=seed,
+                    mask_token_id=mask_token_id,
+                )
         else:
             raise ValueError(f"unknown method: {method}")
 
+        if selected_tokens is None:
+            raise AssertionError("decoder did not sample committed token values")
         for local_row, global_row in enumerate(global_rows):
             positions = commit_sets[local_row]
             tokens = [int(selected_tokens[local_row, position]) for position in positions]
@@ -395,7 +507,7 @@ def checkpoint_file(path_value: str) -> Path:
 
 def resolve_policy_checkpoint(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
     """Resolve either the locally trained DPO head or the sealed HF paper head."""
-    if args.method == "dpo_policy_v2":
+    if args.method == "dpo_policy_v3":
         checkpoint = checkpoint_file(args.dpo_policy_checkpoint)
         return checkpoint, {
             "source": "locally_trained_dpo",
@@ -464,10 +576,14 @@ def load_policy(args: argparse.Namespace, device: torch.device):
 
     architecture = (
         args.resolved_policy_architecture
-        if args.method == "dpo_policy_v2"
+        if args.method == "dpo_policy_v3"
         else PAPER_POLICY_ARCHITECTURE
     )
-    policy = build_policy(args.policy_repo, device, architecture)
+    policy = (
+        ProjectedHiddenSetPolicy(architecture).to(device)
+        if args.method == "dpo_policy_v3"
+        else build_policy(args.policy_repo, device, architecture)
+    )
     checkpoint = getattr(args, "resolved_policy_checkpoint", None)
     receipt = getattr(args, "resolved_policy_checkpoint_receipt", None)
     if checkpoint is None or receipt is None:
@@ -585,8 +701,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         policy_checkpoint_path, policy_checkpoint_receipt = resolve_policy_checkpoint(args)
         args.resolved_policy_checkpoint = policy_checkpoint_path
         args.resolved_policy_checkpoint_receipt = policy_checkpoint_receipt
-        policy_repo_revision = git_revision(args.policy_repo)
-        if args.method == "dpo_policy_v2":
+        policy_repo_revision = git_revision(args.policy_repo) if args.method == "paper_policy" else None
+        if args.method == "dpo_policy_v3":
             training_manifest = policy_checkpoint_path.parent / "training_manifest.json"
             if not training_manifest.is_file():
                 raise FileNotFoundError(f"DPO checkpoint has no training manifest: {training_manifest}")
@@ -597,7 +713,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 raise ValueError("DPO checkpoint and evaluation Base revisions differ")
             args.resolved_policy_architecture = training_data.get("policy_architecture")
             if args.resolved_policy_architecture != DPO_POLICY_ARCHITECTURE:
-                raise ValueError("DPO checkpoint architecture differs from the sealed v2 architecture")
+                raise ValueError("DPO checkpoint architecture differs from the sealed v3 architecture")
             policy_training_receipt = {
                 "path": str(training_manifest),
                 "sha256": file_sha256(training_manifest),
@@ -608,7 +724,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "method_label": METHOD_LABELS[args.method],
         "temperature": args.temperature,
         "temperature_semantics": "categorical_softmax_logits_div_T",
-        "policy_temperature": args.policy_temperature if args.method in POLICY_METHODS else None,
+        "policy_temperature": (
+            DPO_POLICY_TEMPERATURE
+            if args.method == "dpo_policy_v3"
+            else args.policy_temperature if args.method == "paper_policy" else None
+        ),
         "policy_sampling": "independent_bernoulli_then_force_argmax_if_empty"
         if args.method in POLICY_METHODS
         else None,
@@ -632,7 +752,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "sft_adapter": resolve_adapter_hash(args.sft_adapter) if args.method == "lora_sft" else None,
         "unmasking_policy_architecture": (
             args.resolved_policy_architecture
-            if args.method == "dpo_policy_v2"
+            if args.method == "dpo_policy_v3"
             else PAPER_POLICY_ARCHITECTURE if args.method == "paper_policy" else None
         ),
         "unmasking_policy_checkpoint": policy_checkpoint_receipt,
@@ -686,7 +806,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             method=args.method,
             policy=policy,
             temperature=args.temperature,
-            policy_temperature=args.policy_temperature,
+            policy_temperature=(
+                DPO_POLICY_TEMPERATURE if args.method == "dpo_policy_v3" else args.policy_temperature
+            ),
             confidence_threshold=args.confidence_threshold,
             entropy_threshold=args.entropy_threshold,
             canvas_length=args.canvas_length,
@@ -804,8 +926,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("lora_sft requires SFT_ADAPTER_PATH or --sft-adapter")
     if args.method == "paper_policy" and not args.policy_repo:
         parser.error("paper_policy requires ML_RL_DLLM_REPO")
-    if args.method == "dpo_policy_v2" and (not args.dpo_policy_checkpoint or not args.policy_repo):
-        parser.error("dpo_policy_v2 requires DPO_POLICY_CHECKPOINT and ML_RL_DLLM_REPO")
+    if args.method == "dpo_policy_v3" and not args.dpo_policy_checkpoint:
+        parser.error("dpo_policy_v3 requires DPO_POLICY_CHECKPOINT")
     return args
 
 

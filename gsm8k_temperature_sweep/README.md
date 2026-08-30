@@ -1,6 +1,6 @@
 # Full GSM8K temperature and pass@k sweep
 
-This folder is a self-contained, resumable train-and-evaluate chain for six LLaDA-family methods on GSM8K. It first completes the five-method baseline table, then trains an offline-DPO version of Apple's unmasking policy on all 7,473 training examples, evaluates it on the complete official 1,319-example test split, and creates a final matched table at token temperatures `T = {0.1, 0.8, 1.2}`.
+This folder is a self-contained, resumable train-and-evaluate chain for six LLaDA-family methods on GSM8K. It first completes the five-method baseline table, then trains an online trajectory-DPO hidden-state selector on all 7,473 training examples, evaluates it on the complete official 1,319-example test split, and creates a final matched table at token temperatures `T = {0.1, 0.8, 1.2}`.
 
 ## Methods
 
@@ -11,7 +11,7 @@ This folder is a self-contained, resumable train-and-evaluate chain for six LLaD
 | `dparallel` | [dParallel: Learnable Parallel Decoding for dLLMs](https://arxiv.org/abs/2509.26488) | `Zigeng/dParallel-LLaDA-8B-instruct` |
 | `paper_policy` | [Learning Unmasking Policies for Diffusion Language Models](https://arxiv.org/abs/2512.09106) | Frozen Base plus `orkunkinay/ml-rl-dllm-gs8` checkpoint 14972 from Hugging Face |
 | `lora_sft` | Standard full-GSM8K LoRA SFT | Frozen Base plus the exact adapter bundled under `artifacts/gsm8k_lora_sft` |
-| `dpo_policy_v2` | Pure Base-DPO top-8 contextual policy | Frozen Base plus a new two-block policy head trained only from Base trajectories |
+| `dpo_policy_v3` | Hidden-state select-then-sample DPO policy | Frozen Base plus a new two-block projected-hidden-state selector |
 
 The JSD row implements the pairwise-distribution variational update described by [Mean-Field Parallel Decoding for Discrete Diffusion Language Models](https://arxiv.org/abs/2606.15805), using the exact selector already developed in this repository.
 
@@ -25,6 +25,7 @@ The JSD row implements the pairwise-distribution variational update described by
 - Base/JSD/LoRA decoder: global confidence threshold 0.90 and highest-confidence fallback.
 - dParallel: entropy threshold 0.50 and minimum-entropy fallback.
 - Paper policy: official confidence-only one-block DiT architecture, full context, Bernoulli-argmax evaluation, fixed policy temperature 0.5 (the paper's block-32 setting).
+- Hidden-state DPO: two-block projected-hidden selector, Bernoulli evaluation at its matched training policy temperature 1.0; token temperature remains the table's `T`.
 - NFE: one per full model forward per trajectory. Decoder/head work is not an NFE, but it is included in synchronized latency.
 - `sample_accuracy`: marginal exact-match accuracy over all ten paths.
 - `pass@5`: whether any of paths 0–4 is exact-match correct.
@@ -33,19 +34,15 @@ The JSD row implements the pairwise-distribution variational update described by
 
 The baseline table is 5 methods × 3 temperatures × 1,319 examples × 10 paths = **197,850 complete trajectories**. The DPO evaluation adds 3 × 1,319 × 10 = **39,570 trajectories**, producing an 18-row final table. Every cell is a full run, not a screen or promotion gate.
 
-## Offline-DPO policy
+## Logit-free online-DPO policy
 
-The DPO baseline uses the paper's exact confidence-only, one-block DiT Bernoulli policy and keeps LLaDA fully frozen. After the 15 baseline rows finish, it collects four deterministic frozen-Base trajectories per training prompt using confidence thresholds `0.30, 0.50, 0.70, 0.90`. It ranks paths with the paper's multiplicative terminal reward:
+The DPO method keeps LLaDA fully frozen. Its position selector receives only a fixed 128-dimensional projection of the frozen Base final hidden states, the canvas mask, and normalized decoding time. It never receives token logits, confidence, entropy, margins, JSD, or dParallel features. Selected token values are subsequently sampled from the frozen Base conditional, preserving the select-then-sample separation.
 
-```text
-correct * ((L - min(NFE, L) + 1) / L) ** alpha
-```
-
-Every strict within-prompt reward ordering becomes an offline preference pair. Tied paths—especially pairs of incorrect paths—produce no preference, preventing a fast-but-wrong training signal. The policy is initialized from and optimized relative to a frozen smart-initialized reference head using the standard pairwise DPO log-ratio loss. There is no critic, GRPO/PPO update, trainable Base parameter, RL checkpoint initialization, or official-test training signal.
+For each training prompt, ten trajectories are sampled from the current hidden-state policy using different action-rate offsets. The fastest correct trajectory is preferred to the fastest incorrect trajectory for safety and to the slowest correct trajectory for efficiency. Incorrect-only prompts and tied outcomes fabricate no preference. The head is updated immediately with the standard reference-relative DPO loss, so subsequent trajectories are on-policy with respect to the latest head. There is no scalar reward, critic, PPO/GRPO update, trainable Base parameter, logit-derived behavior selector, or official-test training signal.
 
 ## Artifact resolution
 
-No checkpoint-path exports are required. Base and dParallel are downloaded from their Hugging Face repositories. The public Apple-method policy artifact is downloaded from `orkunkinay/ml-rl-dllm-gs8/checkpoint-14972/model.safetensors`. The exact standard-LoRA adapter used by the existing mddm full256 baseline is committed inside this standalone folder. Pure DPO v2 starts from frozen Base, collects ten Base-only behavior paths per training prompt (four confidence thresholds and six fixed wave sizes), warm-starts its reference on the fastest correct path, and then fits correctness-first safety and efficiency preferences. It writes its own resumable artifacts under `final_results/checkpoints/dpo_policy_v2`. It imports no JSD or dParallel selector signal.
+No checkpoint-path exports are required. Base and dParallel are downloaded from their Hugging Face repositories. The public Apple-method policy artifact is downloaded from `orkunkinay/ml-rl-dllm-gs8/checkpoint-14972/model.safetensors`. The exact standard-LoRA adapter used by the existing mddm full256 baseline is committed inside this standalone folder. Hidden-state DPO writes its resumable state under `final_results/checkpoints/dpo_policy_v3`.
 
 ## Unity setup and launch
 
@@ -88,8 +85,8 @@ $MDDM_SWEEP_OUTPUT_ROOT/
   dparallel/T0.1/...
   paper_policy/T0.1/...
   lora_sft/T0.1/...
-  dpo_policy_v2/T0.1/...
-  checkpoints/dpo_policy_v2/{training_contract.json,training_manifest.json,model.safetensors,winner_bc_reference.safetensors,preferences/}
+  dpo_policy_v3/T0.1/...
+  checkpoints/dpo_policy_v3/{training_contract.json,training_manifest.json,trainer_resume.pt,model.safetensors,preferences/}
   tables/{baseline_table.csv,baseline_table.md,baseline_all_summaries.json}
   tables/{final_table.csv,final_table.md,all_summaries.json}
   logs/
