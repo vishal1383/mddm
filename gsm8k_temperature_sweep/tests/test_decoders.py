@@ -10,6 +10,39 @@ except ModuleNotFoundError:
 
 @unittest.skipIf(torch is None, "PyTorch is installed by the Unity bootstrap, not system Python")
 class DecoderTransitionTest(unittest.TestCase):
+    def test_exact_zero_temperature_is_greedy(self) -> None:
+        from evaluate import decode_batch
+
+        class Output:
+            def __init__(self, logits):
+                self.logits = logits
+
+        class Model:
+            def __call__(self, input_ids, use_cache=False, output_hidden_states=False):
+                logits = torch.zeros((*input_ids.shape, 11), device=input_ids.device)
+                logits[..., 2] = 12.0
+                logits[..., 3] = 11.0
+                return Output(logits)
+
+        result = decode_batch(
+            Model(),
+            [1],
+            method="dparallel",
+            policy=None,
+            temperature=0.0,
+            policy_temperature=0.5,
+            confidence_threshold=0.9,
+            entropy_threshold=0.5,
+            canvas_length=4,
+            block_length=2,
+            samples=1,
+            example_index=0,
+            seed=42,
+            mask_token_id=6,
+            device=torch.device("cpu"),
+        )
+        self.assertEqual(result["canvases"], [[2, 2, 2, 2]])
+
     def test_every_method_finishes_with_one_model_call_per_cycle(self) -> None:
         from evaluate import decode_batch
 

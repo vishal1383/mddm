@@ -247,11 +247,18 @@ def sample_active_tokens(
         local[:, int(mask_token_id)] = -torch.inf
         maximum = local.max(dim=-1).values
         top_confidence[local_row, positions] = (maximum - local.logsumexp(dim=-1)).exp()
-        generator = torch.Generator(device=logits.device)
-        generator.manual_seed(
-            stable_seed(master_seed, example_index, int(trajectory_ids[local_row]), int(prior_nfe[local_row]), "token")
-        )
-        selected = torch.multinomial((local / float(temperature)).softmax(dim=-1), 1, generator=generator).squeeze(-1)
+        if float(temperature) == 0.0:
+            selected = local.argmax(dim=-1)
+        else:
+            if float(temperature) < 0.0 or not math.isfinite(float(temperature)):
+                raise ValueError("token temperature must be finite and nonnegative")
+            generator = torch.Generator(device=logits.device)
+            generator.manual_seed(
+                stable_seed(master_seed, example_index, int(trajectory_ids[local_row]), int(prior_nfe[local_row]), "token")
+            )
+            selected = torch.multinomial(
+                (local / float(temperature)).softmax(dim=-1), 1, generator=generator
+            ).squeeze(-1)
         tokens[local_row, positions] = selected
     return tokens, top_confidence
 
@@ -274,17 +281,24 @@ def sample_committed_tokens(
         positions = torch.tensor(commit_set, dtype=torch.long, device=logits.device)
         local = logits[local_row, positions].detach().float().clone()
         local[:, int(mask_token_id)] = -torch.inf
-        generator = torch.Generator(device=logits.device)
-        generator.manual_seed(
-            stable_seed(
-                master_seed,
-                example_index,
-                int(trajectory_ids[local_row]),
-                int(prior_nfe[local_row]),
-                "token",
+        if float(temperature) == 0.0:
+            selected = local.argmax(dim=-1, keepdim=True)
+        else:
+            if float(temperature) < 0.0 or not math.isfinite(float(temperature)):
+                raise ValueError("token temperature must be finite and nonnegative")
+            generator = torch.Generator(device=logits.device)
+            generator.manual_seed(
+                stable_seed(
+                    master_seed,
+                    example_index,
+                    int(trajectory_ids[local_row]),
+                    int(prior_nfe[local_row]),
+                    "token",
+                )
             )
-        )
-        selected = torch.multinomial((local / float(temperature)).softmax(dim=-1), 1, generator=generator)
+            selected = torch.multinomial(
+                (local / float(temperature)).softmax(dim=-1), 1, generator=generator
+            )
         tokens[local_row, positions] = selected.squeeze(-1)
     return tokens
 
