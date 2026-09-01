@@ -312,7 +312,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--base-revision", default="08b83a6feb34df1a6011b80c3c00c7563e963b07")
     parser.add_argument("--dparallel-revision", default="bbdd4fd017d7d5be141dcf276492d57b6166468f")
     parser.add_argument("--paper-policy-revision", default="12d570517c80fae7271773e668fc0d179b3ad155")
-    parser.add_argument("--policy-temperature", type=float, default=1.0)
+    # Paper setting for semi-autoregressive BL=32.  BL=256 full diffusion uses
+    # policy temperature 1.0 instead; canvas length alone does not determine it.
+    parser.add_argument("--policy-temperature", type=float, default=0.5)
     parser.add_argument("--entropy-threshold", type=float, default=0.5)
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--stop", type=int, default=16)

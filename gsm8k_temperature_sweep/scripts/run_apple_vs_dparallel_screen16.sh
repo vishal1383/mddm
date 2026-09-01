@@ -9,6 +9,7 @@ policy_repo=/workspace/Token2Token/.external/ml-rl-dllm
 python evaluate_screen16.py \
   --method paper_policy \
   --policy-repo "$policy_repo" \
+  --policy-temperature 0.5 \
   --output-root "$output_root"
 
 python evaluate_screen16.py \
