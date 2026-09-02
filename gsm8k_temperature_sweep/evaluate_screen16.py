@@ -43,7 +43,7 @@ SCHEMA = "apple_dparallel_gsm8k_screen16_v1"
 METHODS = ("paper_policy", "dparallel")
 TEMPERATURES = (0.0, 0.5)
 LABELS = {
-    "paper_policy": "Apple GRPO unmasking-policy reproduction",
+    "paper_policy": "Unofficial Apple GRPO reproduction (reward-selected checkpoint)",
     "dparallel": "dParallel published checkpoint",
 }
 

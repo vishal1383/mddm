@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd /workspace/gsm8k_temperature_sweep
 
-output_root=/workspace/gsm8k_temperature_sweep/final_results/screen16_apple_vs_dparallel
+output_root=/workspace/gsm8k_temperature_sweep/final_results/screen16_apple_best_vs_dparallel
 policy_repo=/workspace/Token2Token/.external/ml-rl-dllm
 
 python evaluate_screen16.py \
