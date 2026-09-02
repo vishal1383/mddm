@@ -47,11 +47,11 @@ class ContractTest(unittest.TestCase):
 
     def test_task_matrix_is_complete_and_stable(self) -> None:
         matrix = task_matrix()
-        self.assertEqual(TEMPERATURES, (0.1, 0.8, 1.2))
-        self.assertEqual(len(matrix), 18)
-        self.assertEqual(len(set(matrix)), 18)
+        self.assertEqual(TEMPERATURES, (0.1, 0.5, 0.8, 1.2))
+        self.assertEqual(len(matrix), 24)
+        self.assertEqual(len(set(matrix)), 24)
         self.assertEqual(task_for_id(0), (METHODS[0], TEMPERATURES[0]))
-        self.assertEqual(task_for_id(17), (METHODS[-1], TEMPERATURES[-1]))
+        self.assertEqual(task_for_id(23), (METHODS[-1], TEMPERATURES[-1]))
         self.assertEqual(temperature_slug(1.2), "T1.2")
 
     def test_pass_metrics_and_micro_throughput(self) -> None:
@@ -81,7 +81,7 @@ class ContractTest(unittest.TestCase):
         self.assertAlmostEqual(summary["micro_tokens_per_nfe"], 8.0)
         self.assertAlmostEqual(summary["end_to_end_tokens_per_second"], 1280.0)
 
-    def test_aggregator_requires_and_accepts_all_eighteen_cells(self) -> None:
+    def test_aggregator_requires_and_accepts_all_twenty_four_cells(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with self.assertRaises(FileNotFoundError):
@@ -121,7 +121,7 @@ class ContractTest(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
-            self.assertEqual(len(collect(root)), 18)
+            self.assertEqual(len(collect(root)), 24)
 
 
 if __name__ == "__main__":

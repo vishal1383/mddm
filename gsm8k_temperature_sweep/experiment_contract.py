@@ -31,11 +31,11 @@ METHOD_LABELS = {
     "base": "Frozen Base confidence decoder",
     "jsd_mean_field": "JSD mean-field decoder",
     "dparallel": "dParallel",
-    "paper_policy": "Learning Unmasking Policies",
+    "paper_policy": "Unofficial Apple-method GRPO reproduction",
     "lora_sft": "Standard full-GSM8K LoRA SFT",
     "dpo_policy_v3": "Hidden-state select-then-sample DPO policy",
 }
-TEMPERATURES = (0.1, 0.8, 1.2)
+TEMPERATURES = (0.1, 0.5, 0.8, 1.2)
 
 
 def task_matrix() -> tuple[tuple[str, float], ...]:

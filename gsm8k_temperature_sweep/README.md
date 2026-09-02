@@ -1,6 +1,6 @@
 # Full GSM8K temperature and pass@k sweep
 
-This folder is a self-contained, resumable train-and-evaluate chain for six LLaDA-family methods on GSM8K. It first completes the five-method baseline table, then trains an online trajectory-DPO hidden-state selector on all 7,473 training examples, evaluates it on the complete official 1,319-example test split, and creates a final matched table at token temperatures `T = {0.1, 0.8, 1.2}`.
+This folder is a self-contained, resumable train-and-evaluate chain for six LLaDA-family methods on GSM8K. It first completes the five-method baseline table, then trains an online trajectory-DPO hidden-state selector on all 7,473 training examples, evaluates it on the complete official 1,319-example test split, and creates a final matched table at token temperatures `T = {0.1, 0.5, 0.8, 1.2}`.
 
 ## Methods
 
@@ -9,7 +9,7 @@ This folder is a self-contained, resumable train-and-evaluate chain for six LLaD
 | `base` | Frozen Base confidence decoder | `GSAI-ML/LLaDA-8B-Instruct` |
 | `jsd_mean_field` | Training-free JSD pair-interaction fixed-point decoder | Frozen Base |
 | `dparallel` | [dParallel: Learnable Parallel Decoding for dLLMs](https://arxiv.org/abs/2509.26488) | `Zigeng/dParallel-LLaDA-8B-instruct` |
-| `paper_policy` | [Learning Unmasking Policies for Diffusion Language Models](https://arxiv.org/abs/2512.09106) | Frozen Base plus `orkunkinay/ml-rl-dllm-gs8` checkpoint 14972 from Hugging Face |
+| `paper_policy` | [Learning Unmasking Policies for Diffusion Language Models](https://arxiv.org/abs/2512.09106) | Frozen Base plus the unofficial `orkunkinay/ml-rl-dllm-gs8` reward-selected checkpoint from Hugging Face |
 | `lora_sft` | Standard full-GSM8K LoRA SFT | Frozen Base plus the exact adapter bundled under `artifacts/gsm8k_lora_sft` |
 | `dpo_policy_v3` | Hidden-state select-then-sample DPO policy | Frozen Base plus a new two-block projected-hidden-state selector |
 
@@ -32,7 +32,7 @@ The JSD row implements the pairwise-distribution variational update described by
 - `pass@10`: whether any of paths 0–9 is exact-match correct.
 - `Tok/NFE`: `sum(generated tokens) / sum(full model forwards)` over all ten paths and all examples.
 
-The baseline table is 5 methods × 3 temperatures × 1,319 examples × 10 paths = **197,850 complete trajectories**. The DPO evaluation adds 3 × 1,319 × 10 = **39,570 trajectories**, producing an 18-row final table. Every cell is a full run, not a screen or promotion gate.
+The baseline table is 5 methods × 4 temperatures × 1,319 examples × 10 paths = **263,800 complete trajectories**. The DPO evaluation adds 4 × 1,319 × 10 = **52,760 trajectories**, producing a 24-row final table. Every cell is a full run, not a screen or promotion gate.
 
 ## Logit-free online-DPO policy
 
@@ -42,7 +42,7 @@ For each training prompt, ten trajectories are sampled from the current hidden-s
 
 ## Artifact resolution
 
-No checkpoint-path exports are required. Base and dParallel are downloaded from their Hugging Face repositories. The public Apple-method policy artifact is downloaded from `orkunkinay/ml-rl-dllm-gs8/checkpoint-14972/model.safetensors`. The exact standard-LoRA adapter used by the existing mddm full256 baseline is committed inside this standalone folder. Hidden-state DPO writes its resumable state under `final_results/checkpoints/dpo_policy_v3`.
+No checkpoint-path exports are required. Base and dParallel are downloaded from their Hugging Face repositories. The unofficial Apple-method reproduction is downloaded from `orkunkinay/ml-rl-dllm-gs8/checkpoint-best/model.safetensors` (training step 9,608, selected by the uploader's training-reward rule). The exact standard-LoRA adapter used by the existing mddm full256 baseline is committed inside this standalone folder. Hidden-state DPO writes its resumable state under `final_results/checkpoints/dpo_policy_v3`.
 
 ## Unity setup and launch
 
@@ -67,11 +67,11 @@ The submitted job itself owns one A100 on `gpu-preempt`. It bootstraps and valid
 No checkpoint-path exports are required. Hugging Face authentication uses the existing login/environment cache when needed.
 
 ```text
-15 baseline full-test cells (sequential)
-  -> saved 15-row table
+20 baseline full-test cells (sequential)
+  -> saved 20-row table
   -> full 7,473-example DPO collection and training
-  -> 3 DPO full-test cells (sequential)
-  -> saved 18-row final table
+  -> 4 DPO full-test cells (sequential)
+  -> saved 24-row final table
 ```
 
 `submit_all.sbatch` explicitly requests `--partition=gpu-preempt` and `--gres=gpu:a100:1`, with no separate QoS. It has a 45-hour wall-time, receives `USR1` before preemption, saves atomic progress, and requeues the same job. On restart, valid completed cells are skipped without loading an 8B model; evaluation records, DPO preference records, DPO trainer state, and sealed model revisions are reused. There are no accuracy or throughput gates.
@@ -92,7 +92,7 @@ $MDDM_SWEEP_OUTPUT_ROOT/
   logs/
 ```
 
-Before running GPU work, the controller resolves Base, dParallel, and the paper-policy repository to immutable commit SHAs. Contracts also seal adapter/policy hashes, evaluator source, thresholds, geometry, prompt, and seed. The intermediate table contains 15 cells. Final aggregation fails if any of the 18 summaries is absent, malformed, or not a full 1,319-example result.
+Before running GPU work, the controller resolves Base, dParallel, and the paper-policy repository to immutable commit SHAs. Contracts also seal adapter/policy hashes, evaluator source, thresholds, geometry, prompt, and seed. The intermediate table contains 20 cells. Final aggregation fails if any of the 24 summaries is absent, malformed, or not a full 1,319-example result.
 
 For a manual table rebuild:
 

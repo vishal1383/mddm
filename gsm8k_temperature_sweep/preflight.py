@@ -100,9 +100,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     dpo_checkpoint = require_local_policy_checkpoint(args.dpo_policy_checkpoint) if args.require_dpo else None
     repo, revision = require_policy_repo(args.policy_repo)
     matrix = task_matrix()
-    if len(matrix) != 18 or len(METHODS) != 6 or TEMPERATURES != (0.1, 0.8, 1.2):
-        raise AssertionError("expected a 6 x 3 = 18 task matrix")
-    if len(set(matrix)) != len(matrix) or task_for_id(17) != (METHODS[-1], TEMPERATURES[-1]):
+    if len(matrix) != 24 or len(METHODS) != 6 or TEMPERATURES != (0.1, 0.5, 0.8, 1.2):
+        raise AssertionError("expected a 6 x 4 = 24 task matrix")
+    if len(set(matrix)) != len(matrix) or task_for_id(23) != (METHODS[-1], TEMPERATURES[-1]):
         raise AssertionError("task matrix is not a one-to-one deterministic mapping")
     print(
         json.dumps(

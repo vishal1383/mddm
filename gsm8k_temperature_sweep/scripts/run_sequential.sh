@@ -41,6 +41,13 @@ run_stage() {
     status=$?
   fi
   ACTIVE_PID=""
+  if [[ -n "${SLURM_JOB_ID:-}" && ( "$status" -eq 120 || "$status" -eq 143 ) ]]; then
+    echo "Resumable stage exited with status $status; requeueing job $SLURM_JOB_ID." >&2
+    if scontrol requeue "$SLURM_JOB_ID"; then
+      exit 0
+    fi
+    echo "Failed to requeue job $SLURM_JOB_ID." >&2
+  fi
   return "$status"
 }
 
@@ -69,12 +76,12 @@ run_eval_cell() {
     --task-id "$task_id" --output-root "$MDDM_SWEEP_OUTPUT_ROOT"
 }
 
-echo "Stage 1/5: 15 baseline full-test cells on one A100, sequentially."
-for task_id in $(seq 0 14); do
+echo "Stage 1/5: 20 baseline full-test cells on one A100, sequentially."
+for task_id in $(seq 0 19); do
   run_eval_cell "$task_id"
 done
 
-echo "Stage 2/5: preserve the 15-row baseline table."
+echo "Stage 2/5: preserve the 20-row baseline table."
 run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/aggregate.py" \
   --output-root "$MDDM_SWEEP_OUTPUT_ROOT" --allow-partial --table-stem baseline_table
 
@@ -83,12 +90,12 @@ run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/train_dpo_policy.py" \
   --output-dir "$(dirname "$DPO_POLICY_CHECKPOINT")"
 run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/preflight.py" --require-dpo
 
-echo "Stage 4/5: 3 DPO full-test cells on the same A100, sequentially."
-for task_id in $(seq 15 17); do
+echo "Stage 4/5: 4 DPO full-test cells on the same A100, sequentially."
+for task_id in $(seq 20 23); do
   run_eval_cell "$task_id"
 done
 
-echo "Stage 5/5: fail-closed final 18-row table."
+echo "Stage 5/5: fail-closed final 24-row table."
 run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/aggregate.py" \
   --output-root "$MDDM_SWEEP_OUTPUT_ROOT" --table-stem final_table
 
