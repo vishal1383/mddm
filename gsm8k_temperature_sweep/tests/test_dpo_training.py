@@ -81,7 +81,11 @@ class DpoTrainingTest(unittest.TestCase):
             self.assertTrue(torch.equal(trace["action"], other["action"]))
 
         record = {"traces": traces, "pairs": [(0, 1)]}
-        with tempfile.TemporaryDirectory() as temporary:
+        # Unity's project filesystem can expose a short metadata-propagation
+        # race while removing freshly atomically-renamed files.  The contents
+        # are already validated below, so cleanup latency must not fail the
+        # otherwise-complete submission preflight.
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temporary:
             path = Path(temporary) / "record.pt"
             atomic_torch_save(path, record)
             loaded = torch.load(path, map_location="cpu", weights_only=True)
