@@ -40,6 +40,7 @@ class PolicyAdapterTest(unittest.TestCase):
 
     def test_official_bl32_checkpoint_round_trip(self) -> None:
         from evaluate import APPLE_POLICY_ARCHITECTURE, load_policy
+        from experiment_contract import file_sha256
         from safetensors.torch import save_file
 
         architecture = APPLE_POLICY_ARCHITECTURE
@@ -47,13 +48,14 @@ class PolicyAdapterTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             checkpoint = Path(temporary) / "model.safetensors"
             save_file(wrapper.state_dict(), str(checkpoint))
+            expected_sha256 = file_sha256(checkpoint)
             loaded, receipt = load_policy(
                 SimpleNamespace(
                     method="apple_policy_rl",
                     policy_repo=POLICY_REPO,
                     resolved_policy_architecture=architecture,
                     resolved_policy_checkpoint=checkpoint,
-                    resolved_policy_checkpoint_receipt={"sha256": "fixture"},
+                    resolved_policy_checkpoint_receipt={"sha256": expected_sha256},
                 ),
                 torch.device("cpu"),
             )
@@ -63,7 +65,7 @@ class PolicyAdapterTest(unittest.TestCase):
             torch.zeros((2, 1)),
         )
         self.assertEqual(tuple(output.shape), (2, 32))
-        self.assertEqual(len(receipt["sha256"]), 64)
+        self.assertEqual(receipt["sha256"], expected_sha256)
 
     def test_hidden_state_dpo_checkpoint_round_trip(self) -> None:
         from evaluate import DPO_POLICY_ARCHITECTURE, ProjectedHiddenSetPolicy, load_policy
