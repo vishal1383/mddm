@@ -8,6 +8,7 @@ export MDDM_SWEEP_VENV="${MDDM_SWEEP_VENV:-$STATE_ROOT/venv}"
 export ML_RL_DLLM_REPO="${ML_RL_DLLM_REPO:-$STATE_ROOT/ml-rl-dllm-35e4830485f1}"
 export MDDM_SWEEP_OUTPUT_ROOT="${MDDM_SWEEP_OUTPUT_ROOT:-$EXPERIMENT_ROOT/final_results}"
 export DPO_POLICY_CHECKPOINT="$MDDM_SWEEP_OUTPUT_ROOT/checkpoints/dpo_policy_v3/model.safetensors"
+export APPLE_POLICY_CHECKPOINT="$MDDM_SWEEP_OUTPUT_ROOT/checkpoints/apple_policy_rl/checkpoint-best/model.safetensors"
 export HF_HOME="${HF_HOME:-$STATE_ROOT/huggingface}"
 export TOKENIZERS_PARALLELISM=false
 
@@ -51,11 +52,11 @@ run_stage() {
   return "$status"
 }
 
-read -r BASE_MODEL_REVISION DPARALLEL_MODEL_REVISION PAPER_POLICY_REVISION < <(
+read -r BASE_MODEL_REVISION DPARALLEL_MODEL_REVISION JUSTGRPO_MODEL_REVISION < <(
   "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/seal_model_revisions.py" \
-    --output "$MDDM_SWEEP_OUTPUT_ROOT/manifests/sealed_model_revisions.json"
+    --output "$MDDM_SWEEP_OUTPUT_ROOT/manifests/sealed_model_revisions_v3.json"
 )
-export BASE_MODEL_REVISION DPARALLEL_MODEL_REVISION PAPER_POLICY_REVISION
+export BASE_MODEL_REVISION DPARALLEL_MODEL_REVISION JUSTGRPO_MODEL_REVISION
 run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/preflight.py"
 
 run_eval_cell() {
@@ -76,26 +77,42 @@ run_eval_cell() {
     --task-id "$task_id" --output-root "$MDDM_SWEEP_OUTPUT_ROOT"
 }
 
-echo "Stage 1/5: 20 baseline full-test cells on one A100, sequentially."
-for task_id in $(seq 0 19); do
+echo "Stage 1/7: JustGRPO checkpoint first, all 4 full-test temperatures."
+for task_id in $(seq 12 15); do
   run_eval_cell "$task_id"
 done
 
-echo "Stage 2/5: preserve the 20-row baseline table."
-run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/aggregate.py" \
-  --output-root "$MDDM_SWEEP_OUTPUT_ROOT" --allow-partial --table-stem baseline_table
+echo "Stage 2/7: train Apple's official BL32 alpha=0.3 GRPO policy on the full paper mixture."
+run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/train_apple_policy.py" \
+  --apple-root "$ML_RL_DLLM_REPO" \
+  --config "$EXPERIMENT_ROOT/configs/apple_llada_bl32_alpha03.yaml" \
+  --output-dir "$MDDM_SWEEP_OUTPUT_ROOT/checkpoints/apple_policy_rl" \
+  --base-revision "$BASE_MODEL_REVISION"
+run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/preflight.py" --require-apple
 
-echo "Stage 3/5: full 7,473-example online hidden-state trajectory-DPO training."
-run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/train_dpo_policy.py" \
-  --output-dir "$(dirname "$DPO_POLICY_CHECKPOINT")"
-run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/preflight.py" --require-dpo
-
-echo "Stage 4/5: 4 DPO full-test cells on the same A100, sequentially."
+echo "Stage 3/7: evaluate the saved Apple GRPO policy at all 4 full-test temperatures."
 for task_id in $(seq 20 23); do
   run_eval_cell "$task_id"
 done
 
-echo "Stage 5/5: fail-closed final 24-row table."
+echo "Stage 4/7: finish/reuse Base, JSD, dParallel, and LoRA cells."
+for task_id in $(seq 0 11) $(seq 16 19); do
+  run_eval_cell "$task_id"
+done
+
+echo "Stage 5/7: preserve the 24-row non-DPO table."
+run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/aggregate.py" \
+  --output-root "$MDDM_SWEEP_OUTPUT_ROOT" --allow-partial --table-stem baseline_table
+
+echo "Stage 6/7: full 7,473-example online hidden-state trajectory-DPO training and evaluation."
+run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/train_dpo_policy.py" \
+  --output-dir "$(dirname "$DPO_POLICY_CHECKPOINT")"
+run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/preflight.py" --require-dpo
+for task_id in $(seq 24 27); do
+  run_eval_cell "$task_id"
+done
+
+echo "Stage 7/7: fail-closed final 28-row table."
 run_stage "$MDDM_SWEEP_VENV/bin/python" "$EXPERIMENT_ROOT/aggregate.py" \
   --output-root "$MDDM_SWEEP_OUTPUT_ROOT" --table-stem final_table
 

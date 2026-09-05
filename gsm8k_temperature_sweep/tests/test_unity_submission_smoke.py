@@ -8,7 +8,7 @@ import unittest
 
 
 class UnitySubmissionSmokeTest(unittest.TestCase):
-    def test_in_allocation_launcher_executes_all_24_cells_in_order(self) -> None:
+    def test_in_allocation_launcher_executes_priority_order_then_all_28_cells(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temporary_value:
             temporary = Path(temporary_value)
@@ -20,7 +20,7 @@ class UnitySubmissionSmokeTest(unittest.TestCase):
                 """#!/usr/bin/env bash
 echo "$*" >> "$FAKE_PYTHON_CALLS"
 if [[ "${1:-}" == *seal_model_revisions.py ]]; then
-  echo base-revision-sha dparallel-revision-sha paper-policy-revision-sha
+  echo base-revision-sha dparallel-revision-sha justgrpo-revision-sha
 elif [[ "${1:-}" == *is_cell_complete.py ]]; then
   exit 1
 fi
@@ -48,11 +48,19 @@ exit 0
 
         eval_calls = [call for call in calls if "/evaluate.py " in call]
         task_ids = [int(call.split("--task-id ", 1)[1].split()[0]) for call in eval_calls]
-        self.assertEqual(task_ids, list(range(24)))
+        self.assertEqual(
+            task_ids,
+            list(range(12, 16))
+            + list(range(20, 24))
+            + list(range(0, 12))
+            + list(range(16, 20))
+            + list(range(24, 28)),
+        )
+        self.assertEqual(sum("/train_apple_policy.py " in call for call in calls), 1)
         self.assertEqual(sum("/train_dpo_policy.py " in call for call in calls), 1)
         self.assertEqual(sum("/aggregate.py " in call for call in calls), 2)
-        self.assertIn("Stage 1/5", completed.stdout)
-        self.assertIn("Stage 5/5", completed.stdout)
+        self.assertIn("Stage 1/7", completed.stdout)
+        self.assertIn("Stage 7/7", completed.stdout)
         self.assertIn(str(output_root / "tables/final_table.md"), completed.stdout)
 
 

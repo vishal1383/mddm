@@ -8,10 +8,10 @@ EXPERIMENT_ROOT = Path(__file__).resolve().parent
 
 BASE_MODEL_ID = "GSAI-ML/LLaDA-8B-Instruct"
 DPARALLEL_MODEL_ID = "Zigeng/dParallel-LLaDA-8B-instruct"
+JUSTGRPO_MODEL_ID = "nzl-thu/LLaDA-Instruct-JustGRPO-GSM8K"
 
-# Public, unofficial reproduction of the Apple confidence-only GRPO policy
-# trained with group size 8 on the GSM8K+MATH mixture.  Use the uploader's
-# reward-selected checkpoint rather than the collapsed final training step.
+# Retained only for the historical 16-example diagnostic script.  The
+# production chain neither downloads nor evaluates this unofficial artifact.
 PAPER_POLICY_REPO_ID = "orkunkinay/ml-rl-dllm-gs8"
 PAPER_POLICY_FILENAME = "checkpoint-best/model.safetensors"
 
