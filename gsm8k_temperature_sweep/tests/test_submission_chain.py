@@ -14,15 +14,20 @@ class SubmissionChainTest(unittest.TestCase):
         batch = (root / "slurm/submit_all.sbatch").read_text(encoding="utf-8")
         script = (root / "scripts/run_sequential.sh").read_text(encoding="utf-8")
         markers = (
-            'Stage 1/5:',
-            'seq 0 19',
-            'Stage 2/5:',
-            'baseline_table',
-            'Stage 3/5:',
-            'train_dpo_policy.py',
-            'Stage 4/5:',
+            'Stage 1/7:',
+            'seq 12 15',
+            'Stage 2/7:',
+            'train_apple_policy.py',
+            'Stage 3/7:',
             'seq 20 23',
-            'Stage 5/5:',
+            'Stage 4/7:',
+            'seq 0 11',
+            'Stage 5/7:',
+            'baseline_table',
+            'Stage 6/7:',
+            'train_dpo_policy.py',
+            'seq 24 27',
+            'Stage 7/7:',
             'final_table',
         )
         offsets = [script.index(marker) for marker in markers]

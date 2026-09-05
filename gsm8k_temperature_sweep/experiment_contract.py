@@ -23,16 +23,18 @@ METHODS = (
     "base",
     "jsd_mean_field",
     "dparallel",
-    "paper_policy",
+    "justgrpo",
     "lora_sft",
+    "apple_policy_rl",
     "dpo_policy_v3",
 )
 METHOD_LABELS = {
     "base": "Frozen Base confidence decoder",
     "jsd_mean_field": "JSD mean-field decoder",
     "dparallel": "dParallel",
-    "paper_policy": "Unofficial Apple-method GRPO reproduction",
+    "justgrpo": "JustGRPO GSM8K checkpoint + confidence decoder",
     "lora_sft": "Standard full-GSM8K LoRA SFT",
+    "apple_policy_rl": "Apple unmasking policy (official GRPO, newly trained)",
     "dpo_policy_v3": "Hidden-state select-then-sample DPO policy",
 }
 TEMPERATURES = (0.1, 0.5, 0.8, 1.2)
@@ -63,7 +65,8 @@ def canonical_sha256(value: Any) -> str:
 def resume_compatible_contract(existing: dict[str, Any], current: dict[str, Any]) -> bool:
     """Allow partial legacy baselines to resume after DPO-only source edits."""
 
-    if existing.get("method") == "dpo_policy_v3" or current.get("method") == "dpo_policy_v3":
+    learned = {"apple_policy_rl", "dpo_policy_v3"}
+    if existing.get("method") in learned or current.get("method") in learned:
         return False
     ignored = {"contract_sha256", "evaluator_sources_sha256"}
     old_semantics = {key: value for key, value in existing.items() if key not in ignored}

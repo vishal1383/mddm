@@ -9,7 +9,7 @@ from pathlib import Path
 
 from huggingface_hub import HfApi
 
-from artifact_sources import BASE_MODEL_ID, DPARALLEL_MODEL_ID, PAPER_POLICY_REPO_ID
+from artifact_sources import BASE_MODEL_ID, DPARALLEL_MODEL_ID, JUSTGRPO_MODEL_ID
 
 
 def main() -> None:
@@ -22,14 +22,14 @@ def main() -> None:
         expected = {
             "base_model_id": BASE_MODEL_ID,
             "dparallel_model_id": DPARALLEL_MODEL_ID,
-            "paper_policy_repo_id": PAPER_POLICY_REPO_ID,
+            "justgrpo_model_id": JUSTGRPO_MODEL_ID,
         }
         if any(sealed.get(key) != value for key, value in expected.items()):
             raise ValueError(f"saved revision manifest has different artifact sources: {output}")
         print(
             str(sealed["base_model_revision"]),
             str(sealed["dparallel_model_revision"]),
-            str(sealed["paper_policy_revision"]),
+            str(sealed["justgrpo_model_revision"]),
         )
         return
     api = HfApi(token=os.environ.get("HF_TOKEN"))
@@ -37,11 +37,11 @@ def main() -> None:
     dparallel = api.model_info(
         DPARALLEL_MODEL_ID, revision=os.environ.get("DPARALLEL_MODEL_REVISION", "main")
     ).sha
-    paper_policy = api.model_info(
-        PAPER_POLICY_REPO_ID, revision=os.environ.get("PAPER_POLICY_REVISION", "main")
+    justgrpo = api.model_info(
+        JUSTGRPO_MODEL_ID, revision=os.environ.get("JUSTGRPO_MODEL_REVISION", "main")
     ).sha
-    if not base or not dparallel or not paper_policy or any(
-        character.isspace() for character in f"{base}{dparallel}{paper_policy}"
+    if not base or not dparallel or not justgrpo or any(
+        character.isspace() for character in f"{base}{dparallel}{justgrpo}"
     ):
         raise RuntimeError("failed to seal immutable model revisions")
     if output:
@@ -54,8 +54,8 @@ def main() -> None:
                     "base_model_revision": str(base),
                     "dparallel_model_id": DPARALLEL_MODEL_ID,
                     "dparallel_model_revision": str(dparallel),
-                    "paper_policy_repo_id": PAPER_POLICY_REPO_ID,
-                    "paper_policy_revision": str(paper_policy),
+                    "justgrpo_model_id": JUSTGRPO_MODEL_ID,
+                    "justgrpo_model_revision": str(justgrpo),
                 },
                 indent=2,
                 sort_keys=True,
@@ -64,7 +64,7 @@ def main() -> None:
             encoding="utf-8",
         )
         os.replace(temporary, output)
-    print(base, dparallel, paper_policy)
+    print(base, dparallel, justgrpo)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # Full GSM8K temperature and pass@k sweep
 
-This folder is a self-contained, resumable train-and-evaluate chain for six LLaDA-family methods on GSM8K. It first completes the five-method baseline table, then trains an online trajectory-DPO hidden-state selector on all 7,473 training examples, evaluates it on the complete official 1,319-example test split, and creates a final matched table at token temperatures `T = {0.1, 0.5, 0.8, 1.2}`.
+This folder is a self-contained, resumable train-and-evaluate chain for seven LLaDA-family methods on GSM8K. The priority order is deliberate: it evaluates the released JustGRPO checkpoint first, then trains Apple's unmasking-policy method from scratch, saves and evaluates that policy, and finally completes/reuses the remaining baselines and local DPO run. Every evaluation covers the complete official 1,319-example test split at token temperatures `T = {0.1, 0.5, 0.8, 1.2}`.
 
 ## Methods
 
@@ -9,8 +9,9 @@ This folder is a self-contained, resumable train-and-evaluate chain for six LLaD
 | `base` | Frozen Base confidence decoder | `GSAI-ML/LLaDA-8B-Instruct` |
 | `jsd_mean_field` | Training-free JSD pair-interaction fixed-point decoder | Frozen Base |
 | `dparallel` | [dParallel: Learnable Parallel Decoding for dLLMs](https://arxiv.org/abs/2509.26488) | `Zigeng/dParallel-LLaDA-8B-instruct` |
-| `paper_policy` | [Learning Unmasking Policies for Diffusion Language Models](https://arxiv.org/abs/2512.09106) | Frozen Base plus the unofficial `orkunkinay/ml-rl-dllm-gs8` reward-selected checkpoint from Hugging Face |
+| `justgrpo` | [JustGRPO](https://arxiv.org/abs/2601.15165) | Released `nzl-thu/LLaDA-Instruct-JustGRPO-GSM8K` checkpoint, evaluated with the matched confidence decoder |
 | `lora_sft` | Standard full-GSM8K LoRA SFT | Frozen Base plus the exact adapter bundled under `artifacts/gsm8k_lora_sft` |
+| `apple_policy_rl` | [Learning Unmasking Policies for Diffusion Language Models](https://arxiv.org/abs/2512.09106) | Frozen Base plus a policy newly trained by the pinned official Apple code |
 | `dpo_policy_v3` | Hidden-state select-then-sample DPO policy | Frozen Base plus a new two-block projected-hidden-state selector |
 
 The JSD row implements the pairwise-distribution variational update described by [Mean-Field Parallel Decoding for Discrete Diffusion Language Models](https://arxiv.org/abs/2606.15805), using the exact selector already developed in this repository.
@@ -24,7 +25,8 @@ The JSD row implements the pairwise-distribution variational update described by
 - Token temperature: conventional categorical sampling from `softmax(logits / T)`.
 - Base/JSD/LoRA decoder: global confidence threshold 0.90 and highest-confidence fallback.
 - dParallel: entropy threshold 0.50 and minimum-entropy fallback.
-- Paper policy: official confidence-only one-block DiT architecture, full context, Bernoulli-argmax evaluation, fixed policy temperature 0.5 (the paper's block-32 setting).
+- JustGRPO: the released GSM8K model checkpoint under the same threshold-0.90 matched confidence transition used for Base and LoRA; this is intentionally distinct from the paper's fixed-step reporting sampler.
+- Apple policy: official confidence-only one-block DiT architecture, full context, Bernoulli-argmax evaluation, fixed policy temperature 0.5 (the paper's block-32 setting).
 - Hidden-state DPO: two-block projected-hidden selector, Bernoulli evaluation at its matched training policy temperature 1.0; token temperature remains the table's `T`.
 - NFE: one per full model forward per trajectory. Decoder/head work is not an NFE, but it is included in synchronized latency.
 - `sample_accuracy`: marginal exact-match accuracy over all ten paths.
@@ -32,7 +34,13 @@ The JSD row implements the pairwise-distribution variational update described by
 - `pass@10`: whether any of paths 0–9 is exact-match correct.
 - `Tok/NFE`: `sum(generated tokens) / sum(full model forwards)` over all ten paths and all examples.
 
-The baseline table is 5 methods × 4 temperatures × 1,319 examples × 10 paths = **263,800 complete trajectories**. The DPO evaluation adds 4 × 1,319 × 10 = **52,760 trajectories**, producing a 24-row final table. Every cell is a full run, not a screen or promotion gate.
+The six non-DPO methods contribute 24 full cells, and the DPO evaluation adds four, producing a 28-row final table and **369,320 complete trajectories**. Every cell is a full run, not a screen or promotion gate.
+
+## Newly trained Apple policy
+
+The chain pins Apple's official `ml-rl-dllm` source at commit `35e4830485f1821d57f9ac3f1a303f3d4531fb82`. It trains the paper's BL32 confidence-only Bernoulli policy for one epoch on the full proportional GSM8K+MATH mixture (roughly 15K examples), using eight trajectories per group, greedy Base token sampling, and the multiplicative correctness/compute reward with `alpha=0.3`. The 8-GPU paper configuration is adapted to one A100 by using a global batch of 16; policy architecture, rollout, reward, and GRPO loss are unchanged.
+
+Periodic optimizer checkpoints make training resumable under preemption. The official reward-selected `checkpoint-best` is sealed by SHA-256 in `training_manifest.json` before any evaluation starts. The Base is explicitly frozen and contributes zero trainable parameters.
 
 ## Logit-free online-DPO policy
 
@@ -42,7 +50,7 @@ For each training prompt, ten trajectories are sampled from the current hidden-s
 
 ## Artifact resolution
 
-No checkpoint-path exports are required. Base and dParallel are downloaded from their Hugging Face repositories. The unofficial Apple-method reproduction is downloaded from `orkunkinay/ml-rl-dllm-gs8/checkpoint-best/model.safetensors` (training step 9,608, selected by the uploader's training-reward rule). The exact standard-LoRA adapter used by the existing mddm full256 baseline is committed inside this standalone folder. Hidden-state DPO writes its resumable state under `final_results/checkpoints/dpo_policy_v3`.
+No checkpoint-path exports are required. Base, dParallel, and JustGRPO are downloaded from their Hugging Face repositories and sealed to immutable revisions. The exact standard-LoRA adapter used by the existing mddm full256 baseline is committed inside this standalone folder. The Apple and hidden-state DPO stages write resumable state under `final_results/checkpoints/apple_policy_rl` and `final_results/checkpoints/dpo_policy_v3` respectively.
 
 ## Unity setup and launch
 
@@ -67,11 +75,13 @@ The submitted job itself owns one A100 on `gpu-preempt`. It bootstraps and valid
 No checkpoint-path exports are required. Hugging Face authentication uses the existing login/environment cache when needed.
 
 ```text
-20 baseline full-test cells (sequential)
-  -> saved 20-row table
-  -> full 7,473-example DPO collection and training
-  -> 4 DPO full-test cells (sequential)
-  -> saved 24-row final table
+4 JustGRPO full-test cells
+  -> full Apple GSM8K+MATH GRPO training and saved checkpoint
+  -> 4 saved-Apple-policy full-test cells
+  -> finish/reuse Base, JSD, dParallel, and LoRA cells
+  -> saved 24-row non-DPO table
+  -> full 7,473-example DPO collection/training and 4 full-test cells
+  -> saved 28-row final table
 ```
 
 `submit_all.sbatch` explicitly requests `--partition=gpu-preempt` and `--gres=gpu:a100:1`, with no separate QoS. It has a 45-hour wall-time, receives `USR1` before preemption, saves atomic progress, and requeues the same job. On restart, valid completed cells are skipped without loading an 8B model; evaluation records, DPO preference records, DPO trainer state, and sealed model revisions are reused. There are no accuracy or throughput gates.
@@ -83,16 +93,18 @@ $MDDM_SWEEP_OUTPUT_ROOT/
   base/T0.1/{contract.json,runtime_manifest.json,records/,summary.json}
   jsd_mean_field/T0.1/...
   dparallel/T0.1/...
-  paper_policy/T0.1/...
+  justgrpo/T0.1/...
   lora_sft/T0.1/...
+  apple_policy_rl/T0.1/...
   dpo_policy_v3/T0.1/...
+  checkpoints/apple_policy_rl/{training_contract.json,training_manifest.json,checkpoint-best/,checkpoint-*/}
   checkpoints/dpo_policy_v3/{training_contract.json,training_manifest.json,trainer_resume.pt,model.safetensors,preferences/}
   tables/{baseline_table.csv,baseline_table.md,baseline_all_summaries.json}
   tables/{final_table.csv,final_table.md,all_summaries.json}
   logs/
 ```
 
-Before running GPU work, the controller resolves Base, dParallel, and the paper-policy repository to immutable commit SHAs. Contracts also seal adapter/policy hashes, evaluator source, thresholds, geometry, prompt, and seed. The intermediate table contains 20 cells. Final aggregation fails if any of the 24 summaries is absent, malformed, or not a full 1,319-example result.
+Before running GPU work, the controller resolves Base, dParallel, and JustGRPO to immutable commit SHAs and verifies the pinned Apple source. Contracts also seal adapter/policy hashes, evaluator source, thresholds, geometry, prompt, and seed. The intermediate table contains 24 cells. Final aggregation fails if any of the 28 summaries is absent, malformed, or not a full 1,319-example result.
 
 For a manual table rebuild:
 

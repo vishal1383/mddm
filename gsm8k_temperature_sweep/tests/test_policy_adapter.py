@@ -39,19 +39,21 @@ class PolicyAdapterTest(unittest.TestCase):
         return PolicyHFWrapper(core, "dit_confidence")
 
     def test_official_bl32_checkpoint_round_trip(self) -> None:
-        from evaluate import PAPER_POLICY_ARCHITECTURE, load_policy
+        from evaluate import APPLE_POLICY_ARCHITECTURE, load_policy
         from safetensors.torch import save_file
 
-        architecture = PAPER_POLICY_ARCHITECTURE
+        architecture = APPLE_POLICY_ARCHITECTURE
         wrapper = self._wrapper(architecture)
         with tempfile.TemporaryDirectory() as temporary:
             checkpoint = Path(temporary) / "model.safetensors"
             save_file(wrapper.state_dict(), str(checkpoint))
             loaded, receipt = load_policy(
                 SimpleNamespace(
-                    method="paper_policy",
+                    method="apple_policy_rl",
                     policy_repo=POLICY_REPO,
-                    policy_checkpoint=str(checkpoint),
+                    resolved_policy_architecture=architecture,
+                    resolved_policy_checkpoint=checkpoint,
+                    resolved_policy_checkpoint_receipt={"sha256": "fixture"},
                 ),
                 torch.device("cpu"),
             )

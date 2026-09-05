@@ -21,8 +21,7 @@ from answers import extract_gsm8k_answer
 from artifact_sources import (
     BASE_MODEL_ID,
     DPARALLEL_MODEL_ID,
-    PAPER_POLICY_FILENAME,
-    PAPER_POLICY_REPO_ID,
+    JUSTGRPO_MODEL_ID,
     SFT_ADAPTER_PATH,
 )
 from experiment_contract import (
@@ -46,22 +45,12 @@ from experiment_contract import (
     task_for_id,
     temperature_slug,
 )
+from policy_specs import APPLE_POLICY_ARCHITECTURE
 
 
 MASK_TOKEN_ID = 126336
-PAPER_POLICY_ARCHITECTURE = {
-    "policy_type": "dit_confidence",
-    "hidden_dim": 128,
-    "feedforward_dim": 512,
-    "num_heads": 2,
-    "dropout": 0.0,
-    "time_embed_dim": 128,
-    "confidences_top_p": 1,
-    "smart_init": -2.0,
-    "num_blocks": 1,
-    "time_period": 1,
-    "full_context": True,
-}
+# Backward-compatible name for the retained historical screen16 utility.
+PAPER_POLICY_ARCHITECTURE = APPLE_POLICY_ARCHITECTURE
 DPO_POLICY_ARCHITECTURE = {
     "policy_type": "projected_hidden_set",
     "base_hidden_dim": 4096,
@@ -76,7 +65,7 @@ DPO_POLICY_ARCHITECTURE = {
     "full_context": True,
     "selector_inputs": "frozen_base_final_hidden_state_mask_and_timestep_only",
 }
-POLICY_METHODS = {"paper_policy", "dpo_policy_v3"}
+POLICY_METHODS = {"apple_policy_rl", "dpo_policy_v3"}
 DPO_POLICY_TEMPERATURE = 1.0
 
 
@@ -382,7 +371,7 @@ def decode_batch(
                 mask_token_id=mask_token_id,
             )
         commit_sets: list[tuple[int, ...]] = []
-        if method in {"base", "lora_sft", "jsd_mean_field"}:
+        if method in {"base", "lora_sft", "justgrpo", "jsd_mean_field"}:
             assert top_confidence is not None
             # Position confidence comes from the clean current top-1, exactly
             # as in standard confidence decoding. Temperature changes the
@@ -497,6 +486,8 @@ def prompt_ids(tokenizer, question: str) -> list[int]:
 
 
 def checkpoint_file(path_value: str) -> Path:
+    if not path_value:
+        raise ValueError("a local policy checkpoint path is required")
     path = Path(path_value).expanduser().resolve()
     if path.is_dir():
         path = path / "model.safetensors"
@@ -506,7 +497,7 @@ def checkpoint_file(path_value: str) -> Path:
 
 
 def resolve_policy_checkpoint(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
-    """Resolve either the locally trained DPO head or the sealed HF paper head."""
+    """Resolve a locally trained selector and its immutable checksum."""
     if args.method == "dpo_policy_v3":
         checkpoint = checkpoint_file(args.dpo_policy_checkpoint)
         return checkpoint, {
@@ -514,30 +505,10 @@ def resolve_policy_checkpoint(args: argparse.Namespace) -> tuple[Path, dict[str,
             "path": str(checkpoint),
             "sha256": file_sha256(checkpoint),
         }
-    local_override = getattr(args, "policy_checkpoint", None)
-    if local_override:
-        checkpoint = checkpoint_file(local_override)
-        return checkpoint, {
-            "source": "local_override",
-            "path": str(checkpoint),
-            "sha256": file_sha256(checkpoint),
-        }
-    from huggingface_hub import hf_hub_download
-
-    revision = str(getattr(args, "paper_policy_revision", "main"))
-    checkpoint = Path(
-        hf_hub_download(
-            repo_id=PAPER_POLICY_REPO_ID,
-            filename=PAPER_POLICY_FILENAME,
-            revision=revision,
-            token=getattr(args, "hf_token", None),
-        )
-    ).resolve()
+    checkpoint = checkpoint_file(getattr(args, "apple_policy_checkpoint", None))
     return checkpoint, {
-        "source": "huggingface",
-        "repo_id": PAPER_POLICY_REPO_ID,
-        "filename": PAPER_POLICY_FILENAME,
-        "resolved_revision": revision,
+        "source": "locally_trained_apple_grpo",
+        "path": str(checkpoint),
         "sha256": file_sha256(checkpoint),
     }
 
@@ -554,7 +525,7 @@ def build_policy(
         sys.path.insert(0, str(upstream))
     from common.models.policy import DiTConfidencePolicy, PolicyHFWrapper
 
-    config = dict(architecture or PAPER_POLICY_ARCHITECTURE)
+    config = dict(architecture or APPLE_POLICY_ARCHITECTURE)
     core = DiTConfidencePolicy(
         hidden_dim=config["hidden_dim"],
         feedforward_dim=config["feedforward_dim"],
@@ -577,7 +548,7 @@ def load_policy(args: argparse.Namespace, device: torch.device):
     architecture = (
         args.resolved_policy_architecture
         if args.method == "dpo_policy_v3"
-        else PAPER_POLICY_ARCHITECTURE
+        else APPLE_POLICY_ARCHITECTURE
     )
     policy = (
         ProjectedHiddenSetPolicy(architecture).to(device)
@@ -635,7 +606,11 @@ def git_revision(path_value: str) -> str:
 def resolve_model(method: str, token: str | None, requested_revision: str) -> tuple[str, str]:
     from huggingface_hub import HfApi
 
-    model_id = DPARALLEL_MODEL_ID if method == "dparallel" else BASE_MODEL_ID
+    model_id = (
+        DPARALLEL_MODEL_ID
+        if method == "dparallel"
+        else JUSTGRPO_MODEL_ID if method == "justgrpo" else BASE_MODEL_ID
+    )
     resolved = HfApi(token=token).model_info(model_id, revision=requested_revision).sha
     if not resolved:
         raise RuntimeError(f"could not resolve an immutable revision for {model_id}")
@@ -692,7 +667,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     records_dir = output / "records"
     records_dir.mkdir(parents=True, exist_ok=True)
     source_receipt = evaluator_source_receipt()
-    requested_revision = args.dparallel_revision if args.method == "dparallel" else args.base_revision
+    requested_revision = (
+        args.dparallel_revision
+        if args.method == "dparallel"
+        else args.justgrpo_revision if args.method == "justgrpo" else args.base_revision
+    )
     args.resolved_model_id, args.resolved_model_revision = resolve_model(args.method, args.hf_token, requested_revision)
     policy_checkpoint_receipt = None
     policy_training_receipt = None
@@ -701,19 +680,36 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         policy_checkpoint_path, policy_checkpoint_receipt = resolve_policy_checkpoint(args)
         args.resolved_policy_checkpoint = policy_checkpoint_path
         args.resolved_policy_checkpoint_receipt = policy_checkpoint_receipt
-        policy_repo_revision = git_revision(args.policy_repo) if args.method == "paper_policy" else None
-        if args.method == "dpo_policy_v3":
-            training_manifest = policy_checkpoint_path.parent / "training_manifest.json"
+        policy_repo_revision = git_revision(args.policy_repo) if args.method == "apple_policy_rl" else None
+        if args.method in {"apple_policy_rl", "dpo_policy_v3"}:
+            training_manifest = (
+                policy_checkpoint_path.parent.parent / "training_manifest.json"
+                if args.method == "apple_policy_rl"
+                else policy_checkpoint_path.parent / "training_manifest.json"
+            )
             if not training_manifest.is_file():
-                raise FileNotFoundError(f"DPO checkpoint has no training manifest: {training_manifest}")
+                raise FileNotFoundError(f"policy checkpoint has no training manifest: {training_manifest}")
             training_data = json.loads(training_manifest.read_text(encoding="utf-8"))
             if not training_data.get("complete"):
-                raise ValueError(f"DPO training is not complete: {training_manifest}")
+                raise ValueError(f"policy training is not complete: {training_manifest}")
+            if args.method == "apple_policy_rl" and training_data.get(
+                "selected_checkpoint_sha256"
+            ) != policy_checkpoint_receipt["sha256"]:
+                raise ValueError("Apple policy checkpoint hash differs from its training manifest")
+            if args.method == "apple_policy_rl" and training_data.get(
+                "apple_source_commit"
+            ) != policy_repo_revision:
+                raise ValueError("Apple training and evaluation source revisions differ")
             if training_data.get("base_model_revision") != args.resolved_model_revision:
-                raise ValueError("DPO checkpoint and evaluation Base revisions differ")
+                raise ValueError("policy checkpoint and evaluation Base revisions differ")
             args.resolved_policy_architecture = training_data.get("policy_architecture")
-            if args.resolved_policy_architecture != DPO_POLICY_ARCHITECTURE:
-                raise ValueError("DPO checkpoint architecture differs from the sealed v3 architecture")
+            expected_architecture = (
+                DPO_POLICY_ARCHITECTURE
+                if args.method == "dpo_policy_v3"
+                else APPLE_POLICY_ARCHITECTURE
+            )
+            if args.resolved_policy_architecture != expected_architecture:
+                raise ValueError("policy checkpoint architecture differs from the sealed architecture")
             policy_training_receipt = {
                 "path": str(training_manifest),
                 "sha256": file_sha256(training_manifest),
@@ -727,7 +723,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "policy_temperature": (
             DPO_POLICY_TEMPERATURE
             if args.method == "dpo_policy_v3"
-            else args.policy_temperature if args.method == "paper_policy" else None
+            else args.policy_temperature if args.method == "apple_policy_rl" else None
         ),
         "policy_sampling": "independent_bernoulli_then_force_argmax_if_empty"
         if args.method in POLICY_METHODS
@@ -740,9 +736,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "block_length": args.block_length,
         "prompt_suffix": PROMPT_SUFFIX,
         "seed": args.seed,
-        "confidence_threshold": args.confidence_threshold if args.method in {"base", "jsd_mean_field", "lora_sft"} else None,
+        "confidence_threshold": args.confidence_threshold if args.method in {"base", "jsd_mean_field", "justgrpo", "lora_sft"} else None,
         "confidence_statistic": "clean_current_top1_probability"
-        if args.method in {"base", "jsd_mean_field", "lora_sft"}
+        if args.method in {"base", "jsd_mean_field", "justgrpo", "lora_sft"}
         else None,
         "dparallel_entropy_threshold": args.entropy_threshold if args.method == "dparallel" else None,
         "one_base_forward_per_cycle": True,
@@ -753,7 +749,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "unmasking_policy_architecture": (
             args.resolved_policy_architecture
             if args.method == "dpo_policy_v3"
-            else PAPER_POLICY_ARCHITECTURE if args.method == "paper_policy" else None
+            else APPLE_POLICY_ARCHITECTURE if args.method == "apple_policy_rl" else None
         ),
         "unmasking_policy_checkpoint": policy_checkpoint_receipt,
         "unmasking_policy_training_manifest": policy_training_receipt,
@@ -893,13 +889,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--temperature", type=float)
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--sft-adapter", default=os.environ.get("SFT_ADAPTER_PATH", str(SFT_ADAPTER_PATH)))
-    parser.add_argument("--policy-checkpoint", default=os.environ.get("UNMASKING_POLICY_CHECKPOINT"))
+    parser.add_argument("--apple-policy-checkpoint", default=os.environ.get("APPLE_POLICY_CHECKPOINT"))
     parser.add_argument("--dpo-policy-checkpoint", default=os.environ.get("DPO_POLICY_CHECKPOINT"))
     parser.add_argument("--policy-repo", default=os.environ.get("ML_RL_DLLM_REPO"))
     parser.add_argument("--hf-token", default=os.environ.get("HF_TOKEN"))
     parser.add_argument("--base-revision", default=os.environ.get("BASE_MODEL_REVISION", "main"))
     parser.add_argument("--dparallel-revision", default=os.environ.get("DPARALLEL_MODEL_REVISION", "main"))
-    parser.add_argument("--paper-policy-revision", default=os.environ.get("PAPER_POLICY_REVISION", "main"))
+    parser.add_argument("--justgrpo-revision", default=os.environ.get("JUSTGRPO_MODEL_REVISION", "main"))
     parser.add_argument("--policy-temperature", type=float, default=0.5)
     parser.add_argument("--confidence-threshold", type=float, default=0.90)
     parser.add_argument("--entropy-threshold", type=float, default=0.50)
@@ -924,8 +920,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("provide --task-id, or both --method and --temperature")
     if args.method == "lora_sft" and not args.sft_adapter:
         parser.error("lora_sft requires SFT_ADAPTER_PATH or --sft-adapter")
-    if args.method == "paper_policy" and not args.policy_repo:
-        parser.error("paper_policy requires ML_RL_DLLM_REPO")
+    if args.method == "apple_policy_rl" and not args.policy_repo:
+        parser.error("apple_policy_rl requires ML_RL_DLLM_REPO")
+    if args.method == "apple_policy_rl" and not args.apple_policy_checkpoint:
+        parser.error("apple_policy_rl requires APPLE_POLICY_CHECKPOINT or --apple-policy-checkpoint")
     if args.method == "dpo_policy_v3" and not args.dpo_policy_checkpoint:
         parser.error("dpo_policy_v3 requires DPO_POLICY_CHECKPOINT")
     return args
