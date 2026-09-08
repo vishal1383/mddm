@@ -79,6 +79,8 @@ labels; do not manufacture those from singleton labels or confidence gains.
 From the mddm repository root, run `sbatch dna_anchor_census/run_unity.slurm`.
 The job requests `--gres=gpu:a100:1` **and** `--constraint=a100`. Python refuses
 zero GPUs, more than one visible GPU, or any GPU whose name lacks A100.
+It matches `gsm8k_temperature_sweep/slurm/submit_all.sbatch` on the
+`gpu-preempt` partition, 45-hour limit and explicit `--requeue` flag.
 The script reuses the existing project's PyTorch interpreter read-only and
 installs separate task-local dependencies. Checkpoints and plots go under
 `dna_anchor_census/.runtime/all_species_v1/`. Resume with the same command and

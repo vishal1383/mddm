@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=d3lm-anchors-both
-#SBATCH --partition=gpu
+#SBATCH --partition=gpu-preempt
 #SBATCH --account=pi_mccallum_umass_edu
 #SBATCH --gres=gpu:a100:1
 #SBATCH --constraint=a100
@@ -8,7 +8,8 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=24G
-#SBATCH --time=2-00:00:00
+#SBATCH --time=45:00:00
+#SBATCH --requeue
 #SBATCH --signal=B:USR1@120
 #SBATCH --output=d3lm-anchors-%j.out
 #SBATCH --error=d3lm-anchors-%j.err

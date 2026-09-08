@@ -10,6 +10,17 @@ from report import ARMS,summarize
 
 
 class ProtocolTest(unittest.TestCase):
+    def test_slurm_matches_existing_a100_submission(self):
+        here=Path(__file__).resolve().parent
+        def directives(path):
+            return set(line.strip() for line in path.read_text().splitlines() if line.startswith('#SBATCH'))
+        dna=directives(here/'run_unity.slurm')
+        existing=directives(here.parent/'gsm8k_temperature_sweep/slurm/submit_all.sbatch')
+        for flag in ['--partition=gpu-preempt','--time=45:00:00','--requeue','--gres=gpu:a100:1']:
+            self.assertIn('#SBATCH '+flag,dna)
+            self.assertIn('#SBATCH '+flag,existing)
+        self.assertIn('#SBATCH --constraint=a100',dna)
+
     def test_exactly_one_a100(self):
         def mock(n,name):
             return SimpleNamespace(cuda=SimpleNamespace(is_available=lambda:n>0,device_count=lambda:n,
