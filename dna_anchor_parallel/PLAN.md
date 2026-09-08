@@ -1,5 +1,10 @@
 # Four-A100 census continuation
 
+Implemented and submitted as Unity job64078116 (pending priority at03:58UTC).
+Latest user direction: parallel across examples; GPU job only collects reusable
+caches, with no plots/aggregate reporting. Plotting has a separate CPU-only job.
+The notes below describe the original implementation plan, now implemented.
+
 User requests full eligible corpus within a47-hour deadline, parallelizable with
 good utilization across four A100s on Unity. User explicitly cancelled the
 single-GPU run; do not restart job64076757. It stopped cleanly with440 completed

@@ -39,7 +39,7 @@ class ParallelTest(unittest.TestCase):
                     self.assertEqual(model.sequences, 4)
                 del output, model
             finally:
-                shutdown.set(); server.join(timeout=10)
+                shutdown.set(); server.join(timeout=60)
                 if server.is_alive():
                     server.terminate(); server.join()
             self.assertEqual(server.exitcode, 0)

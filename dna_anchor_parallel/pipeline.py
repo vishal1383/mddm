@@ -133,6 +133,10 @@ def serve(rank, device, model_path, requests, replies, events, fatal, shutdown,
             log('gpu_stopped', **{k: v for k, v in stats().items() if k != 'rank'})
             journal.flush(); os.fsync(journal.fileno())
         events.put(dict(event='gpu_stopped', **stats()))
+        # Shutdown is requested only after clients have consumed their replies.
+        # Do not let torch IPC feeder cleanup keep a finished GPU process alive.
+        for reply in replies:
+            reply.cancel_join_thread()
     except BaseException:
         events.put(dict(event='error', role='gpu', rank=rank, traceback=traceback.format_exc()))
         fatal.set()

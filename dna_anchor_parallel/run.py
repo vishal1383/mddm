@@ -215,7 +215,7 @@ def main():
             assert process.exitcode == 0, process.name
         shutdown.set()
         for process in servers:
-            process.join(timeout=15)
+            process.join(timeout=60)
             assert process.exitcode == 0, process.name
         phase = 'COMPLETE_CENSUS' if len(complete) == len(records) else (
             'COMPLETE_LIMITED_DIAGNOSTIC' if args.max_new and completed_new == len(remaining) else 'INTERRUPTED_RESUMABLE')
